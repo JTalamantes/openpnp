@@ -21,8 +21,6 @@ package org.openpnp.gui.support;
 
 import org.openpnp.model.Configuration;
 
-import java.util.Locale;
-
 public class PartCellValue implements Comparable<PartCellValue> {
     private static Configuration configuration;
 
@@ -109,10 +107,12 @@ public class PartCellValue implements Comparable<PartCellValue> {
                 num1=getNumeric(s1Second);
                 num2=getNumeric(s2Second);
 
-                if (num1 < num2)
+                if (num1 < num2) {
                     return -1;
-                if (num1 > num2)
+                }
+                if (num1 > num2) {
                     return 1;
+                }
 
                 return 0;
             }

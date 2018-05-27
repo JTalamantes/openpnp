@@ -20,6 +20,7 @@
 package org.openpnp.gui;
 
 import java.awt.BorderLayout;
+import java.awt.Rectangle;
 import java.awt.event.ActionEvent;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
@@ -34,18 +35,20 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
+import javax.swing.JTabbedPane;
 import javax.swing.JTable;
 import javax.swing.JTextField;
 import javax.swing.JToolBar;
 import javax.swing.ListSelectionModel;
 import javax.swing.RowFilter;
-import javax.swing.border.TitledBorder;
+import javax.swing.SwingUtilities;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
 import javax.swing.table.TableRowSorter;
 
+import org.openpnp.events.FeederSelectedEvent;
 import org.openpnp.gui.components.AutoSelectTextTable;
 import org.openpnp.gui.components.ClassSelectionDialog;
 import org.openpnp.gui.support.ActionGroup;
@@ -63,13 +66,12 @@ import org.openpnp.spi.Feeder;
 import org.openpnp.spi.Nozzle;
 import org.openpnp.util.MovableUtils;
 import org.openpnp.util.UiUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.pmw.tinylog.Logger;
+
+import com.google.common.eventbus.Subscribe;
 
 @SuppressWarnings("serial")
 public class FeedersPanel extends JPanel implements WizardContainer {
-    private final static Logger logger = LoggerFactory.getLogger(FeedersPanel.class);
-
     private final Configuration configuration;
     private final MainFrame mainFrame;
 
@@ -141,10 +143,13 @@ public class FeedersPanel extends JPanel implements WizardContainer {
         });
         panel_1.add(searchTextField);
         searchTextField.setColumns(15);
+        
+        
         table = new AutoSelectTextTable(tableModel);
         tableSorter = new TableRowSorter<>(tableModel);
 
         final JSplitPane splitPane = new JSplitPane();
+        splitPane.setOrientation(JSplitPane.VERTICAL_SPLIT);
         splitPane.setContinuousLayout(true);
         splitPane
                 .setDividerLocation(prefs.getInt(PREF_DIVIDER_POSITION, PREF_DIVIDER_POSITION_DEF));
@@ -154,18 +159,23 @@ public class FeedersPanel extends JPanel implements WizardContainer {
                 prefs.putInt(PREF_DIVIDER_POSITION, splitPane.getDividerLocation());
             }
         });
+        
         add(splitPane, BorderLayout.CENTER);
-
+        splitPane.setLeftComponent(new JScrollPane(table));
         table.setRowSorter(tableSorter);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
 
+        JTabbedPane tabbedPane = new JTabbedPane(JTabbedPane.TOP);
+        splitPane.setRightComponent(tabbedPane);
+
         configurationPanel = new JPanel();
-        configurationPanel.setBorder(new TitledBorder(null, "Configuration", TitledBorder.LEADING,
-                TitledBorder.TOP, null, null));
+        tabbedPane.addTab("Configuration", null, configurationPanel, null);
+        configurationPanel.setLayout(new BorderLayout(0, 0));
 
         feederSelectedActionGroup = new ActionGroup(deleteFeederAction, feedFeederAction,
                 pickFeederAction, moveCameraToPickLocation, moveToolToPickLocation);
-
+        feederSelectedActionGroup.setEnabled(false);
+        
         table.getSelectionModel().addListSelectionListener(new ListSelectionListener() {
             @Override
             public void valueChanged(ListSelectionEvent e) {
@@ -174,7 +184,7 @@ public class FeedersPanel extends JPanel implements WizardContainer {
                 }
 
                 Feeder feeder = getSelectedFeeder();
-
+                
                 feederSelectedActionGroup.setEnabled(feeder != null);
 
                 configurationPanel.removeAll();
@@ -188,14 +198,31 @@ public class FeedersPanel extends JPanel implements WizardContainer {
                 }
                 revalidate();
                 repaint();
+                
+                Configuration.get().getBus().post(new FeederSelectedEvent(feeder, FeedersPanel.this));
             }
         });
 
-        feederSelectedActionGroup.setEnabled(false);
-
-        splitPane.setLeftComponent(new JScrollPane(table));
-        splitPane.setRightComponent(configurationPanel);
-        configurationPanel.setLayout(new BorderLayout(0, 0));
+        Configuration.get().getBus().register(this);
+    }
+    
+    @Subscribe
+    public void feederSelected(FeederSelectedEvent event) {
+        if (event.source == this) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            mainFrame.showTab("Feeders");
+            
+            for (int i = 0; i < tableModel.getRowCount(); i++) {
+                if (tableModel.getFeeder(i) == event.feeder) {
+                    int index = table.convertRowIndexToView(i);
+                    table.getSelectionModel().setSelectionInterval(index, index);
+                    table.scrollRectToVisible(new Rectangle(table.getCellRect(index, 0, true)));
+                    break;
+                }
+            }
+        });
     }
 
     /**
@@ -206,26 +233,35 @@ public class FeedersPanel extends JPanel implements WizardContainer {
      */
     public void showFeederForPart(Part part) {
         mainFrame.showTab("Feeders");
+        searchTextField.setText("");
+        search();
 
-        Feeder feeder = findFeeder(part);
+        Feeder feeder = findFeeder(part, true);
+        // Prefer enabled feeders but fall back to disabled ones.
         if (feeder == null) {
+            feeder = findFeeder(part, false);
+        }
+        if (feeder == null) {            
             newFeeder(part);
         }
         else {
             table.getSelectionModel().clearSelection();
             for (int i = 0; i < tableModel.getRowCount(); i++) {
-                if (tableModel.getFeeder(i).getPart() == part) {
-                    table.getSelectionModel().setSelectionInterval(0, i);
+                if (tableModel.getFeeder(i) == feeder) {
+                    int index = table.convertRowIndexToView(i);
+                    table.getSelectionModel().setSelectionInterval(index, index);
+                    table.scrollRectToVisible(new Rectangle(table.getCellRect(index, 0, true)));
                     break;
                 }
             }
         }
     }
 
-    private Feeder findFeeder(Part part) {
+    private Feeder findFeeder(Part part, boolean enabled) {
         for (int i = 0; i < tableModel.getRowCount(); i++) {
-            if (tableModel.getFeeder(i).getPart() == part) {
-                return tableModel.getFeeder(i);
+            Feeder feeder = tableModel.getFeeder(i); 
+            if (feeder.getPart() == part && feeder.isEnabled() == enabled) {
+                return feeder;
             }
         }
         return null;
@@ -249,7 +285,7 @@ public class FeedersPanel extends JPanel implements WizardContainer {
             rf = RowFilter.regexFilter("(?i)" + searchTextField.getText().trim());
         }
         catch (PatternSyntaxException e) {
-            logger.warn("Search failed", e);
+            Logger.warn("Search failed", e);
             return;
         }
         tableSorter.setRowFilter(rf);
@@ -343,58 +379,45 @@ public class FeedersPanel extends JPanel implements WizardContainer {
 
         @Override
         public void actionPerformed(ActionEvent arg0) {
-            new Thread() {
-                public void run() {
-                    Feeder feeder = getSelectedFeeder();
-                    Nozzle nozzle = MainFrame.get().getMachineControls().getSelectedNozzle();
+            UiUtils.submitUiMachineTask(() -> {
+                Feeder feeder = getSelectedFeeder();
+                Nozzle nozzle = MainFrame.get().getMachineControls().getSelectedNozzle();
 
-                    try {
-                        nozzle.moveToSafeZ();
-                        feeder.feed(nozzle);
-                        Location pickLocation = feeder.getPickLocation();
-                        MovableUtils.moveToLocationAtSafeZ(nozzle, pickLocation);
-                    }
-                    catch (Exception e) {
-                        MessageBoxes.errorBox(FeedersPanel.this, "Feed Error", e);
-                    }
-                }
-            }.start();
+                nozzle.moveToSafeZ();
+                feeder.feed(nozzle);
+                Location pickLocation = feeder.getPickLocation();
+                MovableUtils.moveToLocationAtSafeZ(nozzle, pickLocation);
+            });
         }
     };
 
     public Action pickFeederAction = new AbstractAction() {
         {
-            putValue(SMALL_ICON, Icons.load);
+            putValue(SMALL_ICON, Icons.pick);
             putValue(NAME, "Pick");
             putValue(SHORT_DESCRIPTION, "Perform a feed and pick on the selected feeder.");
         }
 
         @Override
         public void actionPerformed(ActionEvent arg0) {
-            new Thread() {
-                public void run() {
-                    Feeder feeder = getSelectedFeeder();
-                    Nozzle nozzle = MainFrame.get().getMachineControls().getSelectedNozzle();
+            UiUtils.submitUiMachineTask(() -> {
+                Feeder feeder = getSelectedFeeder();
+                Nozzle nozzle = MainFrame.get().getMachineControls().getSelectedNozzle();
 
-                    try {
-                        nozzle.moveToSafeZ();
-                        feeder.feed(nozzle);
-                        Location pickLocation = feeder.getPickLocation();
-                        MovableUtils.moveToLocationAtSafeZ(nozzle, pickLocation);
-                        nozzle.pick(feeder.getPart());
-                        nozzle.moveToSafeZ();
-                    }
-                    catch (Exception e) {
-                        MessageBoxes.errorBox(FeedersPanel.this, "Feed Error", e);
-                    }
-                }
-            }.start();
+                nozzle.moveToSafeZ();
+                feeder.feed(nozzle);
+                Location pickLocation = feeder.getPickLocation();
+                MovableUtils.moveToLocationAtSafeZ(nozzle, pickLocation);
+                nozzle.pick(feeder.getPart());
+                nozzle.moveToSafeZ();
+                feeder.postPick(nozzle);
+            });
         }
     };
 
     public Action moveCameraToPickLocation = new AbstractAction() {
         {
-            putValue(SMALL_ICON, Icons.centerCamera);
+            putValue(SMALL_ICON, Icons.centerCameraOnFeeder);
             putValue(NAME, "Move Camera");
             putValue(SHORT_DESCRIPTION,
                     "Move the camera to the selected feeder's current pick location.");
@@ -414,7 +437,7 @@ public class FeedersPanel extends JPanel implements WizardContainer {
 
     public Action moveToolToPickLocation = new AbstractAction() {
         {
-            putValue(SMALL_ICON, Icons.centerTool);
+            putValue(SMALL_ICON, Icons.centerNozzleOnFeeder);
             putValue(NAME, "Move Tool");
             putValue(SHORT_DESCRIPTION,
                     "Move the tool to the selected feeder's current pick location.");
@@ -422,20 +445,13 @@ public class FeedersPanel extends JPanel implements WizardContainer {
 
         @Override
         public void actionPerformed(ActionEvent arg0) {
-            new Thread() {
-                public void run() {
-                    Feeder feeder = getSelectedFeeder();
-                    Nozzle nozzle = MainFrame.get().getMachineControls().getSelectedNozzle();
+            UiUtils.submitUiMachineTask(() -> {
+                Feeder feeder = getSelectedFeeder();
+                Nozzle nozzle = MainFrame.get().getMachineControls().getSelectedNozzle();
 
-                    try {
-                        Location pickLocation = feeder.getPickLocation();
-                        MovableUtils.moveToLocationAtSafeZ(nozzle, pickLocation);
-                    }
-                    catch (Exception e) {
-                        MessageBoxes.errorBox(FeedersPanel.this, "Movement Error", e);
-                    }
-                }
-            }.start();
+                Location pickLocation = feeder.getPickLocation();
+                MovableUtils.moveToLocationAtSafeZ(nozzle, pickLocation);
+            });
         }
     };
 }

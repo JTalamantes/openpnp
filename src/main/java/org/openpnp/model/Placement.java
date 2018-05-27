@@ -39,9 +39,11 @@ public class Placement extends AbstractModelObject implements Identifiable {
     }
 
     /**
-     * History: 1.0: Initial revision. 1.1: Replaced Boolean place with Type type. Deprecated place.
+     * History: 1.0: Initial revision. 
+     * 1.1: Replaced Boolean place with Type type. Deprecated place.
+     * 1.2: Removed glue attribute.
      */
-    @Version(revision = 1.1)
+    @Version(revision = 1.2)
     private double version;
 
     @Attribute
@@ -54,14 +56,13 @@ public class Placement extends AbstractModelObject implements Identifiable {
     @Attribute(required = false)
     private String partId;
 
-    @Deprecated
-    @Attribute(required = false)
-    private Boolean place;
-
     @Attribute
     private Type type;
 
     private Part part;
+
+    @Attribute
+    private boolean checkFids;
 
     @SuppressWarnings("unused")
     private Placement() {
@@ -86,13 +87,6 @@ public class Placement extends AbstractModelObject implements Identifiable {
         setLocation(location);
         if (getPart() == null) {
             setPart(Configuration.get().getPart(partId));
-        }
-
-        if (version == 1.0) {
-            if (place != null && !place) {
-                type = Type.Ignore;
-            }
-            place = null;
         }
     }
 
@@ -139,6 +133,16 @@ public class Placement extends AbstractModelObject implements Identifiable {
         this.type = type;
         firePropertyChange("type", oldValue, type);
     }
+
+    public boolean getCheckFids() { return checkFids; }
+
+    public void setCheckFids(boolean checkFids)
+    {
+        Object oldValue = this.checkFids;
+        this.checkFids = checkFids;
+        firePropertyChange("check fids", oldValue, checkFids);
+    }
+
 
     @Override
     public String toString() {

@@ -24,37 +24,44 @@ import java.awt.Container;
 import java.awt.FlowLayout;
 import java.awt.FocusTraversalPolicy;
 import java.awt.Font;
-import java.awt.Frame;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
+import java.beans.PropertyChangeListener;
+import java.util.HashMap;
 import java.util.Hashtable;
+import java.util.List;
+import java.util.Map;
 
 import javax.swing.AbstractAction;
 import javax.swing.Action;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSlider;
 import javax.swing.JTabbedPane;
-import javax.swing.JToggleButton;
 import javax.swing.SwingConstants;
 import javax.swing.event.ChangeEvent;
 import javax.swing.event.ChangeListener;
 
 import org.openpnp.ConfigurationListener;
 import org.openpnp.gui.support.Icons;
+import org.openpnp.model.Board;
+import org.openpnp.model.BoardLocation;
 import org.openpnp.model.Configuration;
+import org.openpnp.model.Job;
 import org.openpnp.model.Length;
 import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
+import org.openpnp.model.Point;
 import org.openpnp.spi.Actuator;
 import org.openpnp.spi.Head;
 import org.openpnp.spi.HeadMountable;
 import org.openpnp.spi.Machine;
 import org.openpnp.spi.Nozzle;
 import org.openpnp.spi.PasteDispenser;
+import org.openpnp.util.BeanUtils;
 import org.openpnp.util.MovableUtils;
 import org.openpnp.util.UiUtils;
 
@@ -71,19 +78,18 @@ import com.jgoodies.forms.layout.RowSpec;
  */
 public class JogControlsPanel extends JPanel {
     private final MachineControlsPanel machineControlsPanel;
-    private final Frame frame;
     private final Configuration configuration;
     private JPanel panelActuators;
     private JPanel panelDispensers;
     private JSlider sliderIncrements;
+    private JCheckBox boardProtectionOverrideCheck;
 
     /**
      * Create the panel.
      */
-    public JogControlsPanel(Configuration configuration, MachineControlsPanel machineControlsPanel,
-            Frame frame) {
+    public JogControlsPanel(Configuration configuration,
+            MachineControlsPanel machineControlsPanel) {
         this.machineControlsPanel = machineControlsPanel;
-        this.frame = frame;
         this.configuration = configuration;
 
         createUi();
@@ -153,10 +159,16 @@ public class JogControlsPanel extends JPanel {
         }
     }
 
+    public boolean getBoardProtectionOverrideEnabled() {
+        return boardProtectionOverrideCheck.isSelected();
+    }
+
     private void jog(final int x, final int y, final int z, final int c) {
         UiUtils.submitUiMachineTask(() -> {
-            Location l = machineControlsPanel.getSelectedNozzle().getLocation()
-                    .convertToUnits(Configuration.get().getSystemUnits());
+            HeadMountable tool = machineControlsPanel.getSelectedTool();
+            Location l = tool.getLocation()
+                             .convertToUnits(Configuration.get()
+                                                          .getSystemUnits());
             double xPos = l.getX();
             double yPos = l.getY();
             double zPos = l.getZ();
@@ -193,16 +205,81 @@ public class JogControlsPanel extends JPanel {
                 cPos -= jogIncrement;
             }
 
-            machineControlsPanel.getSelectedNozzle()
-                    .moveTo(new Location(l.getUnits(), xPos, yPos, zPos, cPos));
+            Location targetLocation = new Location(l.getUnits(), xPos, yPos, zPos, cPos);
+            if (!this.getBoardProtectionOverrideEnabled()) {
+                /* check board location before movement */
+                List<BoardLocation> boardLocations = machineControlsPanel.getJobPanel()
+                                                                         .getJob()
+                                                                         .getBoardLocations();
+                for (BoardLocation boardLocation : boardLocations) {
+                    if (!boardLocation.isEnabled()) {
+                        continue;
+                    }
+                    boolean safe = nozzleLocationIsSafe(boardLocation.getLocation(),
+                            boardLocation.getBoard()
+                                         .getDimensions(),
+                            targetLocation, new Length(1.0, l.getUnits()));
+                    if (!safe) {
+                        throw new Exception(
+                                "Nozzle would crash into board: " + boardLocation.toString() + "\n" +
+                                "To disable the board protection go to the \"Safety\" tab in the \"Machine Controls\" panel.");
+                    }
+                }
+            }
+
+            tool.moveTo(targetLocation);
         });
+    }
+
+    private boolean nozzleLocationIsSafe(Location origin, Location dimension, Location nozzle,
+            Length safeDistance) {
+        double distance = safeDistance.convertToUnits(nozzle.getUnits())
+                                      .getValue();
+        Location originConverted = origin.convertToUnits(nozzle.getUnits());
+        Location dimensionConverted = dimension.convertToUnits(dimension.getUnits());
+        double boardUpperZ = originConverted.getZ();
+        boolean containsXY = pointWithinRectangle(originConverted, dimensionConverted, nozzle);
+        boolean containsZ = nozzle.getZ() <= (boardUpperZ + distance);
+        return !(containsXY && containsZ);
+    }
+
+    private boolean pointWithinRectangle(Location origin, Location dimension, Location point) {
+        double rotation = Math.toRadians(origin.getRotation());
+        double ay = origin.getY() + Math.sin(rotation) * dimension.getX();
+        double ax = origin.getX() + Math.cos(rotation) * dimension.getX();
+        Location a = new Location(dimension.getUnits(), ax, ay, 0.0, 0.0);
+
+        double cx = origin.getX() - Math.cos(Math.PI / 2 - rotation) * dimension.getY();
+        double cy = origin.getY() + Math.sin(Math.PI / 2 - rotation) * dimension.getY();
+        Location c = new Location(dimension.getUnits(), cx, cy, 0.0, 0.0);
+
+        double bx = ax + cx - origin.getX();
+        double by = ay + cy - origin.getY();
+        Location b = new Location(dimension.getUnits(), bx, by, 0.0, 0.0);
+
+        return pointWithinTriangle(origin, b, a, point) || pointWithinTriangle(origin, c, b, point);
+    }
+
+    private boolean pointWithinTriangle(Location p1, Location p2, Location p3, Location p) {
+        double alpha = ((p2.getY() - p3.getY()) * (p.getX() - p3.getX())
+                + (p3.getX() - p2.getX()) * (p.getY() - p3.getY()))
+                / ((p2.getY() - p3.getY()) * (p1.getX() - p3.getX())
+                        + (p3.getX() - p2.getX()) * (p1.getY() - p3.getY()));
+        double beta = ((p3.getY() - p1.getY()) * (p.getX() - p3.getX())
+                + (p1.getX() - p3.getX()) * (p.getY() - p3.getY()))
+                / ((p2.getY() - p3.getY()) * (p1.getX() - p3.getX())
+                        + (p3.getX() - p2.getX()) * (p1.getY() - p3.getY()));
+        double gamma = 1.0 - alpha - beta;
+
+        return (alpha > 0.0) && (beta > 0.0) && (gamma > 0.0);
     }
 
     private void park(boolean xy, boolean z, boolean c) {
         UiUtils.submitUiMachineTask(() -> {
             HeadMountable tool = machineControlsPanel.getSelectedTool();
             Location location = tool.getLocation();
-            Location parkLocation = tool.getHead().getParkLocation();
+            Location parkLocation = tool.getHead()
+                                        .getParkLocation();
             parkLocation = parkLocation.convertToUnits(location.getUnits());
             location = location.derive(xy ? parkLocation.getX() : null,
                     xy ? parkLocation.getY() : null, z ? parkLocation.getZ() : null,
@@ -214,12 +291,14 @@ public class JogControlsPanel extends JPanel {
     private void createUi() {
         setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
 
-        JPanel panel = new JPanel();
-        add(panel);
-        panel.setBorder(null);
+        setFocusTraversalPolicy(focusPolicy);
+        setFocusTraversalPolicyProvider(true);
+
+        JTabbedPane tabbedPane_1 = new JTabbedPane(JTabbedPane.TOP);
+        add(tabbedPane_1);
 
         JPanel panelControls = new JPanel();
-        panel.add(panelControls);
+        tabbedPane_1.addTab("Jog", null, panelControls, null);
         panelControls.setLayout(new FormLayout(
                 new ColumnSpec[] {FormSpecs.RELATED_GAP_COLSPEC, FormSpecs.DEFAULT_COLSPEC,
                         FormSpecs.RELATED_GAP_COLSPEC, FormSpecs.DEFAULT_COLSPEC,
@@ -230,7 +309,9 @@ public class JogControlsPanel extends JPanel {
                         FormSpecs.RELATED_GAP_COLSPEC, FormSpecs.DEFAULT_COLSPEC,
                         FormSpecs.RELATED_GAP_COLSPEC, FormSpecs.DEFAULT_COLSPEC,
                         FormSpecs.RELATED_GAP_COLSPEC, FormSpecs.DEFAULT_COLSPEC,
-                        FormSpecs.RELATED_GAP_COLSPEC, ColumnSpec.decode("default:grow"),},
+                        FormSpecs.RELATED_GAP_COLSPEC, FormSpecs.DEFAULT_COLSPEC,
+                        FormSpecs.RELATED_GAP_COLSPEC, FormSpecs.DEFAULT_COLSPEC,
+                        FormSpecs.RELATED_GAP_COLSPEC, FormSpecs.DEFAULT_COLSPEC,},
                 new RowSpec[] {FormSpecs.RELATED_GAP_ROWSPEC, FormSpecs.DEFAULT_ROWSPEC,
                         FormSpecs.RELATED_GAP_ROWSPEC, FormSpecs.DEFAULT_ROWSPEC,
                         FormSpecs.RELATED_GAP_ROWSPEC, FormSpecs.DEFAULT_ROWSPEC,
@@ -294,9 +375,16 @@ public class JogControlsPanel extends JPanel {
         speedSlider.addChangeListener(new ChangeListener() {
             @Override
             public void stateChanged(ChangeEvent e) {
-                Configuration.get().getMachine().setSpeed(speedSlider.getValue() * 0.01);
+                Configuration.get()
+                             .getMachine()
+                             .setSpeed(speedSlider.getValue() * 0.01);
             }
         });
+
+        JButton positionNozzleBtn = new JButton(machineControlsPanel.targetToolAction);
+        positionNozzleBtn.setIcon(Icons.centerTool);
+        positionNozzleBtn.setHideActionText(true);
+        panelControls.add(positionNozzleBtn, "22, 4");
 
         JButton buttonStartStop = new JButton(machineControlsPanel.startStopMachineAction);
         buttonStartStop.setIcon(Icons.powerOn);
@@ -327,6 +415,11 @@ public class JogControlsPanel extends JPanel {
         zDownButton.setHideActionText(true);
         panelControls.add(zDownButton, "14, 8");
 
+        JButton positionCameraBtn = new JButton(machineControlsPanel.targetCameraAction);
+        positionCameraBtn.setIcon(Icons.centerCamera);
+        positionCameraBtn.setHideActionText(true);
+        panelControls.add(positionCameraBtn, "22, 8");
+
         JLabel lblC = new JLabel("C");
         lblC.setHorizontalAlignment(SwingConstants.CENTER);
         lblC.setFont(new Font("Lucida Grande", Font.PLAIN, 22));
@@ -344,18 +437,10 @@ public class JogControlsPanel extends JPanel {
         clockwiseButton.setHideActionText(true);
         panelControls.add(clockwiseButton, "10, 12");
 
-        JTabbedPane tabbedPane = new JTabbedPane(JTabbedPane.TOP);
-        add(tabbedPane);
-
         JPanel panelSpecial = new JPanel();
-        tabbedPane.addTab("Special Commands", null, panelSpecial, null);
+        tabbedPane_1.addTab("Special", null, panelSpecial, null);
         FlowLayout flowLayout_1 = (FlowLayout) panelSpecial.getLayout();
         flowLayout_1.setAlignment(FlowLayout.LEFT);
-
-        panelActuators = new JPanel();
-        tabbedPane.addTab("Actuators", null, panelActuators, null);
-        FlowLayout fl_panelActuators = (FlowLayout) panelActuators.getLayout();
-        fl_panelActuators.setAlignment(FlowLayout.LEFT);
 
         JButton btnSafeZ = new JButton(safezAction);
         panelSpecial.add(btnSafeZ);
@@ -363,13 +448,22 @@ public class JogControlsPanel extends JPanel {
         JButton btnDiscard = new JButton(discardAction);
         panelSpecial.add(btnDiscard);
 
+        panelActuators = new JPanel();
+        tabbedPane_1.addTab("Actuators", null, panelActuators, null);
+        panelActuators.setLayout(new FlowLayout(FlowLayout.LEFT, 5, 5));
+
         panelDispensers = new JPanel();
+        tabbedPane_1.addTab("Dispense", null, panelDispensers, null);
         FlowLayout flowLayout = (FlowLayout) panelDispensers.getLayout();
         flowLayout.setAlignment(FlowLayout.LEFT);
-        tabbedPane.addTab("Paste Dispensers", null, panelDispensers, null);
+        
+        JPanel panelSafety = new JPanel();
+        tabbedPane_1.addTab("Safety", null, panelSafety, null);
+        panelSafety.setLayout(new FlowLayout(FlowLayout.LEFT, 5, 5));
 
-        setFocusTraversalPolicy(focusPolicy);
-        setFocusTraversalPolicyProvider(true);
+        boardProtectionOverrideCheck = new JCheckBox("Override Board Protection");
+        boardProtectionOverrideCheck.setToolTipText("Disable protection of the nozzle jogging closer than 1mm to any loaded board.");
+        panelSafety.add(boardProtectionOverrideCheck, "1, 1");
     }
 
     private FocusTraversalPolicy focusPolicy = new FocusTraversalPolicy() {
@@ -501,7 +595,10 @@ public class JogControlsPanel extends JPanel {
         @Override
         public void actionPerformed(ActionEvent arg0) {
             UiUtils.submitUiMachineTask(() -> {
-                Configuration.get().getMachine().getDefaultHead().moveToSafeZ();
+                Configuration.get()
+                             .getMachine()
+                             .getDefaultHead()
+                             .moveToSafeZ();
             });
         }
     };
@@ -513,8 +610,9 @@ public class JogControlsPanel extends JPanel {
             UiUtils.submitUiMachineTask(() -> {
                 Nozzle nozzle = machineControlsPanel.getSelectedNozzle();
                 // move to the discard location
-                MovableUtils.moveToLocationAtSafeZ(nozzle,
-                        Configuration.get().getMachine().getDiscardLocation());
+                MovableUtils.moveToLocationAtSafeZ(nozzle, Configuration.get()
+                                                                        .getMachine()
+                                                                        .getDiscardLocation());
                 // discard the part
                 nozzle.place();
                 nozzle.moveToSafeZ();
@@ -539,67 +637,124 @@ public class JogControlsPanel extends JPanel {
                     Math.max(sliderIncrements.getMinimum(), sliderIncrements.getValue() - 1));
         }
     };
+	
+    @SuppressWarnings("serial")
+    public Action setIncrement1Action = new AbstractAction("First Jog Increment") {
+        @Override
+        public void actionPerformed(ActionEvent arg0) {
+            sliderIncrements.setValue(1);
+		}
+    };
+    @SuppressWarnings("serial")
+    public Action setIncrement2Action = new AbstractAction("Second Jog Increment") {
+        @Override
+        public void actionPerformed(ActionEvent arg0) {
+            sliderIncrements.setValue(2);
+		}
+    };
+    @SuppressWarnings("serial")
+    public Action setIncrement3Action = new AbstractAction("Third Jog Increment") {
+        @Override
+        public void actionPerformed(ActionEvent arg0) {
+            sliderIncrements.setValue(3);
+		}
+    };
+    @SuppressWarnings("serial")
+    public Action setIncrement4Action = new AbstractAction("Fourth Jog Increment") {
+        @Override
+        public void actionPerformed(ActionEvent arg0) {
+            sliderIncrements.setValue(4);
+		}
+    };
+    @SuppressWarnings("serial")
+    public Action setIncrement5Action = new AbstractAction("Fifth Jog Increment") {
+        @Override
+        public void actionPerformed(ActionEvent arg0) {
+            sliderIncrements.setValue(5);
+		}
+    };
+
+
+    private void addActuator(Actuator actuator) {
+        String name = actuator.getHead() == null ? actuator.getName() : actuator.getHead()
+                                                                                .getName()
+                + ":" + actuator.getName();
+        JButton actuatorButton = new JButton(name);
+        actuatorButton.addActionListener((e) -> {
+            ActuatorControlDialog dlg = new ActuatorControlDialog(actuator);
+            dlg.pack();
+            dlg.revalidate();
+            dlg.setLocationRelativeTo(JogControlsPanel.this);
+            dlg.setVisible(true);
+        });
+        BeanUtils.addPropertyChangeListener(actuator, "name", e -> {
+            actuatorButton.setText(
+                    actuator.getHead() == null ? actuator.getName() : actuator.getHead()
+                                                                              .getName()
+                            + ":" + actuator.getName());
+        });
+        panelActuators.add(actuatorButton);
+        actuatorButtons.put(actuator, actuatorButton);
+    }
+
+    private void removeActuator(Actuator actuator) {
+        panelActuators.remove(actuatorButtons.remove(actuator));
+    }
 
     private ConfigurationListener configurationListener = new ConfigurationListener.Adapter() {
         @Override
         public void configurationComplete(Configuration configuration) throws Exception {
             setUnits(configuration.getSystemUnits());
-            speedSlider.setValue((int) (configuration.getMachine().getSpeed() * 100));
+            speedSlider.setValue((int) (configuration.getMachine()
+                                                     .getSpeed()
+                    * 100));
 
             panelActuators.removeAll();
 
-            Machine machine = Configuration.get().getMachine();
+            Machine machine = Configuration.get()
+                                           .getMachine();
 
             for (Actuator actuator : machine.getActuators()) {
-                final Actuator actuator_f = actuator;
-                final JToggleButton actuatorButton = new JToggleButton(actuator_f.getName());
-                actuatorButton.setFocusable(false);
-                actuatorButton.addActionListener(new ActionListener() {
-                    @Override
-                    public void actionPerformed(ActionEvent e) {
-                        final boolean state = actuatorButton.isSelected();
-                        UiUtils.submitUiMachineTask(() -> {
-                            actuator_f.actuate(state);
-                        });
-                    }
-                });
-                panelActuators.add(actuatorButton);
+                addActuator(actuator);
             }
             for (final Head head : machine.getHeads()) {
                 for (Actuator actuator : head.getActuators()) {
-                    final Actuator actuator_f = actuator;
-                    final JToggleButton actuatorButton =
-                            new JToggleButton(head.getName() + ":" + actuator_f.getName());
-                    actuatorButton.setFocusable(false);
-                    actuatorButton.addActionListener(new ActionListener() {
-                        @Override
-                        public void actionPerformed(ActionEvent e) {
-                            final boolean state = actuatorButton.isSelected();
-                            UiUtils.submitUiMachineTask(() -> {
-                                actuator_f.actuate(state);
-                            });
-                        }
-                    });
-                    panelActuators.add(actuatorButton);
+                    addActuator(actuator);
                 }
                 for (final PasteDispenser dispenser : head.getPasteDispensers()) {
                     final JButton dispenserButton =
                             new JButton(head.getName() + ":" + dispenser.getName());
                     dispenserButton.setFocusable(false);
-                    dispenserButton.addActionListener(new ActionListener() {
-                        @Override
-                        public void actionPerformed(ActionEvent e) {
-                            UiUtils.submitUiMachineTask(() -> {
-                                dispenser.dispense(null, null, 250);
-                            });
-                        }
+                    dispenserButton.addActionListener((e) -> {
+                        UiUtils.submitUiMachineTask(() -> {
+                            dispenser.dispense(null, null, 250);
+                        });
                     });
                     panelDispensers.add(dispenserButton);
                 }
             }
 
+
+            PropertyChangeListener listener = (e) -> {
+                if (e.getOldValue() == null && e.getNewValue() != null) {
+                    Actuator actuator = (Actuator) e.getNewValue();
+                    addActuator(actuator);
+                }
+                else if (e.getOldValue() != null && e.getNewValue() == null) {
+                    removeActuator((Actuator) e.getOldValue());
+                }
+            };
+
+            BeanUtils.addPropertyChangeListener(machine, "actuators", listener);
+            for (Head head : machine.getHeads()) {
+                BeanUtils.addPropertyChangeListener(head, "actuators", listener);
+            }
+
+
             setEnabled(machineControlsPanel.isEnabled());
         }
     };
+
+    private Map<Actuator, JButton> actuatorButtons = new HashMap<>();
     private JSlider speedSlider;
 }

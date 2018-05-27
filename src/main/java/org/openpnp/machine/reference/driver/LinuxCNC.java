@@ -81,15 +81,11 @@ import org.openpnp.machine.reference.ReferencePasteDispenser;
 import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
 import org.openpnp.spi.PropertySheetHolder;
+import org.pmw.tinylog.Logger;
 import org.simpleframework.xml.Attribute;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-/**
- * TODO: Consider adding some type of heartbeat to the firmware.
- */
 public class LinuxCNC implements ReferenceDriver, Runnable {
-    private static final Logger logger = LoggerFactory.getLogger(LinuxCNC.class);
+
     private static final double minimumRequiredVersion = 0.81;
 
     @Attribute(required = false)
@@ -208,7 +204,6 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
 
     @Override
     public void actuate(ReferenceActuator actuator, double value) throws Exception {
-        // TODO Auto-generated method stub
 
     }
 
@@ -224,7 +219,7 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
 
     public synchronized void connect(String serverIp, int port) throws Exception {
         // disconnect();
-        logger.debug("connect({}, {})", serverIp, port);
+        Logger.debug("connect({}, {})", serverIp, port);
         SocketAddress sa = new InetSocketAddress(serverIp, port);
         socket = new Socket();
         socket.connect(sa, CONNECT_TIMOUT * 1000);
@@ -237,6 +232,7 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
             // keep the thread from quickly parsing any responses messages
             // and notifying before we get a change to wait.
             readerThread = new Thread(this);
+            readerThread.setDaemon(true);
             readerThread.start();
             // Wait up to 3 seconds for Grbl to say Hi
             // If we get anything at this point it will have been the settings
@@ -299,7 +295,7 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
 
                 connectedVersion = 1.1;
                 connected = true;
-                logger.debug(
+                Logger.debug(
                         String.format("Connected to LinuxCNCrsh Version: %.2f", connectedVersion));
             }
         }
@@ -311,7 +307,7 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
 
         try {
             if (readerThread != null && readerThread.isAlive()) {
-                readerThread.join();
+                readerThread.join(3000);
             }
             input.close();
             output.close();
@@ -319,7 +315,7 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
             socket.close();
         }
         catch (Exception e) {
-            logger.error("disconnect()", e);
+            Logger.error("disconnect()", e);
         }
 
         disconnectRequested = false;
@@ -332,7 +328,7 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
     private List<String> sendCommand(String command, long timeout) throws Exception {
         synchronized (commandLock) {
             if (command != null) {
-                logger.debug("sendCommand({}, {})", command, timeout);
+                Logger.debug("sendCommand({}, {})", command, timeout);
                 output.write(command.getBytes());
                 output.write("\r\n".getBytes());
 
@@ -351,7 +347,7 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
     public void run() {
         while (!disconnectRequested) {
             String line = readLine().trim();
-            logger.debug(line);
+            Logger.debug(line);
             responseQueue.offer(line);
             synchronized (commandLock) {
                 commandLock.notify();
@@ -397,7 +393,7 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
             }
         }
         catch (Exception e) {
-            logger.error("readLine()", e);
+            Logger.error("readLine()", e);
         }
         return null;
     }
@@ -411,7 +407,7 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
             return ch;
         }
         catch (Exception e) {
-            logger.error("readChar()", e);
+            Logger.error("readChar()", e);
             return -1;
         }
     }
@@ -428,7 +424,6 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
 
     @Override
     public Wizard getConfigurationWizard() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -439,7 +434,6 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
 
     @Override
     public PropertySheetHolder[] getChildPropertySheetHolders() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -450,20 +444,17 @@ public class LinuxCNC implements ReferenceDriver, Runnable {
 
     @Override
     public Action[] getPropertySheetHolderActions() {
-        // TODO Auto-generated method stub
         return null;
     }
 
     @Override
     public Icon getPropertySheetHolderIcon() {
-        // TODO Auto-generated method stub
         return null;
     }
 
     @Override
     public void dispense(ReferencePasteDispenser dispenser, Location startLocation,
             Location endLocation, long dispenseTimeMilliseconds) throws Exception {
-        // TODO Auto-generated method stub
 
     }
 }

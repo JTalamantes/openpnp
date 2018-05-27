@@ -21,7 +21,6 @@ package org.openpnp.machine.reference.feeder;
 
 import javax.swing.Action;
 
-import org.openpnp.gui.support.PropertySheetWizardAdapter;
 import org.openpnp.gui.support.Wizard;
 import org.openpnp.machine.reference.ReferenceFeeder;
 import org.openpnp.machine.reference.feeder.wizards.ReferenceAutoFeederConfigurationWizard;
@@ -30,25 +29,33 @@ import org.openpnp.model.Location;
 import org.openpnp.spi.Actuator;
 import org.openpnp.spi.Nozzle;
 import org.openpnp.spi.PropertySheetHolder;
+import org.pmw.tinylog.Logger;
 import org.simpleframework.xml.Attribute;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-/**
- * Not yet finished feeder that will be used for automated feeding. Just getting the idea down
- * on paper, as it were. It will have an actuator attached and you will be able to choose
- * to either toggle the feeder with a delay or send a double.
- */
 
 public class ReferenceAutoFeeder extends ReferenceFeeder {
-    private final static Logger logger = LoggerFactory.getLogger(ReferenceAutoFeeder.class);
-
+    public enum ActuatorType {
+        Double,
+        Boolean
+    }
+    
     @Attribute(required=false)
     protected String actuatorName;
     
     @Attribute(required=false)
-    protected double actuatorValue;
+    protected ActuatorType actuatorType = ActuatorType.Double;
     
+    @Attribute(required=false)
+    protected double actuatorValue;
+
+    @Attribute(required=false)
+    protected String postPickActuatorName;
+    
+    @Attribute(required=false)
+    protected ActuatorType postPickActuatorType = ActuatorType.Double;
+    
+    @Attribute(required=false)
+    protected double postPickActuatorValue;
+
     @Override
     public Location getPickLocation() throws Exception {
         return location;
@@ -56,12 +63,91 @@ public class ReferenceAutoFeeder extends ReferenceFeeder {
 
     @Override
     public void feed(Nozzle nozzle) throws Exception {
-        if (actuatorName == null) {
-            logger.warn("No actuatorName specified for feeder.");
+        if (actuatorName == null || actuatorName.equals("")) {
+            Logger.warn("No actuatorName specified for feeder {}.", getName());
             return;
         }
-        Actuator actuator = Configuration.get().getMachine().getActuatorByName(actuatorName);
-        actuator.actuate(actuatorValue);
+        Actuator actuator = nozzle.getHead().getActuatorByName(actuatorName);
+        if (actuator == null) {
+            actuator = Configuration.get().getMachine().getActuatorByName(actuatorName);
+        }
+        if (actuator == null) {
+            throw new Exception("Feed failed. Unable to find an actuator named " + actuatorName);
+        }
+        if (actuatorType == ActuatorType.Boolean) {
+            actuator.actuate(actuatorValue != 0);
+        }
+        else {
+            actuator.actuate(actuatorValue);
+        }
+    }
+    
+    @Override
+    public void postPick(Nozzle nozzle) throws Exception {
+        if (postPickActuatorName == null || postPickActuatorName.equals("")) {
+            return;
+        }
+        Actuator actuator = nozzle.getHead().getActuatorByName(postPickActuatorName);
+        if (actuator == null) {
+            actuator = Configuration.get().getMachine().getActuatorByName(postPickActuatorName);
+        }
+        if (actuator == null) {
+            throw new Exception("Post pick failed. Unable to find an actuator named " + postPickActuatorName);
+        }
+        if (postPickActuatorType == ActuatorType.Boolean) {
+            actuator.actuate(postPickActuatorValue != 0);
+        }
+        else {
+            actuator.actuate(postPickActuatorValue);
+        }
+    }
+    
+    public String getActuatorName() {
+        return actuatorName;
+    }
+
+    public void setActuatorName(String actuatorName) {
+        this.actuatorName = actuatorName;
+    }
+
+    public ActuatorType getActuatorType() {
+        return actuatorType;
+    }
+
+    public void setActuatorType(ActuatorType actuatorType) {
+        this.actuatorType = actuatorType;
+    }
+
+    public double getActuatorValue() {
+        return actuatorValue;
+    }
+
+    public void setActuatorValue(double actuatorValue) {
+        this.actuatorValue = actuatorValue;
+    }
+
+    public String getPostPickActuatorName() {
+        return postPickActuatorName;
+    }
+
+    public void setPostPickActuatorName(String postPickActuatorName) {
+        this.postPickActuatorName = postPickActuatorName;
+    }
+
+    public ActuatorType getPostPickActuatorType() {
+        return postPickActuatorType;
+    }
+
+    public void setPostPickActuatorType(ActuatorType postPickActuatorType) {
+        this.postPickActuatorType = postPickActuatorType;
+    }
+
+    public double getPostPickActuatorValue() {
+        return postPickActuatorValue;
+    }
+
+    public void setPostPickActuatorValue(double postPickActuatorValue) {
+        this.postPickActuatorValue = postPickActuatorValue;
     }
 
     @Override
@@ -76,18 +162,11 @@ public class ReferenceAutoFeeder extends ReferenceFeeder {
 
     @Override
     public PropertySheetHolder[] getChildPropertySheetHolders() {
-        // TODO Auto-generated method stub
         return null;
     }
 
     @Override
-    public PropertySheet[] getPropertySheets() {
-        return new PropertySheet[] {new PropertySheetWizardAdapter(getConfigurationWizard())};
-    }
-
-    @Override
     public Action[] getPropertySheetHolderActions() {
-        // TODO Auto-generated method stub
         return null;
     }
 }

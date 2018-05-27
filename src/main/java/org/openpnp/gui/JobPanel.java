@@ -21,15 +21,20 @@ package org.openpnp.gui;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.FileDialog;
 import java.awt.Frame;
+import java.awt.Rectangle;
+import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.io.File;
 import java.io.FilenameFilter;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.prefs.Preferences;
 
@@ -39,22 +44,33 @@ import javax.swing.DefaultCellEditor;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JMenu;
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTable;
 import javax.swing.JToolBar;
+import javax.swing.KeyStroke;
 import javax.swing.ListSelectionModel;
+import javax.swing.SwingUtilities;
 import javax.swing.border.EtchedBorder;
 import javax.swing.border.TitledBorder;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
+import javax.swing.event.TableModelEvent;
+import javax.swing.event.TableModelListener;
 
 import org.openpnp.ConfigurationListener;
+import org.openpnp.events.BoardLocationSelectedEvent;
+import org.openpnp.events.JobLoadedEvent;
+import org.openpnp.events.PlacementSelectedEvent;
 import org.openpnp.gui.components.AutoSelectTextTable;
 import org.openpnp.gui.importer.BoardImporter;
+import org.openpnp.gui.panelization.DlgAutoPanelize;
+import org.openpnp.gui.panelization.DlgPanelXOut;
 import org.openpnp.gui.processes.TwoPlacementBoardLocationProcess;
 import org.openpnp.gui.support.ActionGroup;
 import org.openpnp.gui.support.Helpers;
@@ -69,6 +85,7 @@ import org.openpnp.model.Configuration;
 import org.openpnp.model.Job;
 import org.openpnp.model.Location;
 import org.openpnp.model.Placement;
+import org.openpnp.model.Placement.Type;
 import org.openpnp.spi.Camera;
 import org.openpnp.spi.HeadMountable;
 import org.openpnp.spi.JobProcessor;
@@ -78,8 +95,8 @@ import org.openpnp.spi.MachineListener;
 import org.openpnp.util.FiniteStateMachine;
 import org.openpnp.util.MovableUtils;
 import org.openpnp.util.UiUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.google.common.eventbus.Subscribe;
 
 @SuppressWarnings("serial")
 public class JobPanel extends JPanel {
@@ -96,9 +113,6 @@ public class JobPanel extends JPanel {
         Finished
     }
 
-    @SuppressWarnings("unused")
-    private static final Logger logger = LoggerFactory.getLogger(JobPanel.class);
-    
     final private Configuration configuration;
     final private MainFrame frame;
 
@@ -114,7 +128,6 @@ public class JobPanel extends JPanel {
     private JTable boardLocationsTable;
     private JSplitPane splitPane;
 
-    private ActionGroup jobSaveActionGroup;
     private ActionGroup boardLocationSelectionActionGroup;
 
     private Preferences prefs = Preferences.userNodeForPackage(JobPanel.class);
@@ -134,16 +147,15 @@ public class JobPanel extends JPanel {
 
     private FiniteStateMachine<State, Message> fsm = new FiniteStateMachine<>(State.Stopped);
 
-    public JobPanel(Configuration configuration, MainFrame frame,
-            MachineControlsPanel machineControlsPanel) {
+    public JobPanel(Configuration configuration, MainFrame frame) {
         this.configuration = configuration;
         this.frame = frame;
-
 
         fsm.add(State.Stopped, Message.StartOrPause, State.Running, this::jobStart);
         fsm.add(State.Stopped, Message.Step, State.Stepping, this::jobStart);
 
-        // No action is needed. The job is running and will exit when the state changes to Stepping.
+        // No action is needed. The job is running and will exit when the state
+        // changes to Stepping.
         fsm.add(State.Running, Message.StartOrPause, State.Stepping);
         fsm.add(State.Running, Message.Abort, State.Stopped, this::jobAbort);
         fsm.add(State.Running, Message.Finished, State.Stopped);
@@ -153,25 +165,89 @@ public class JobPanel extends JPanel {
         fsm.add(State.Stepping, Message.Abort, State.Stopped, this::jobAbort);
         fsm.add(State.Stepping, Message.Finished, State.Stopped);
 
-        jobSaveActionGroup = new ActionGroup(saveJobAction);
-        jobSaveActionGroup.setEnabled(false);
-
-        boardLocationSelectionActionGroup = new ActionGroup(removeBoardAction,
-                captureCameraBoardLocationAction, captureToolBoardLocationAction,
-                moveCameraToBoardLocationAction, moveToolToBoardLocationAction,
-                twoPointLocateBoardLocationAction, fiducialCheckAction);
+        boardLocationSelectionActionGroup =
+                new ActionGroup(removeBoardAction, captureCameraBoardLocationAction,
+                        captureToolBoardLocationAction, moveCameraToBoardLocationAction,
+                        moveCameraToBoardLocationNextAction, moveToolToBoardLocationAction,
+                        twoPointLocateBoardLocationAction, fiducialCheckAction, panelizeAction);
         boardLocationSelectionActionGroup.setEnabled(false);
 
+        panelizeXOutAction.setEnabled(false);
+        panelizeFiducialCheck.setEnabled(false);
         boardLocationsTableModel = new BoardLocationsTableModel(configuration);
 
         // Suppress because adding the type specifiers breaks WindowBuilder.
         @SuppressWarnings({"unchecked", "rawtypes"})
         JComboBox sidesComboBox = new JComboBox(Side.values());
 
-        boardLocationsTable = new AutoSelectTextTable(boardLocationsTableModel);
+        boardLocationsTable = new AutoSelectTextTable(boardLocationsTableModel) {
+            @Override
+            public String getToolTipText(MouseEvent e) {
+
+                java.awt.Point p = e.getPoint();
+                int row = rowAtPoint(p);
+                int col = columnAtPoint(p);
+
+                if (row >= 0) {
+                    if (col == 0) {
+                        row = boardLocationsTable.convertRowIndexToModel(row);
+                        BoardLocation boardLocation =
+                                boardLocationsTableModel.getBoardLocation(row);
+                        if (boardLocation != null) {
+                            return boardLocation.getBoard()
+                                                .getFile()
+                                                .toString();
+                        }
+                    }
+                }
+
+                return super.getToolTipText();
+            }
+        };
+
         boardLocationsTable.setAutoCreateRowSorter(true);
         boardLocationsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         boardLocationsTable.setDefaultEditor(Side.class, new DefaultCellEditor(sidesComboBox));
+
+        boardLocationsTable.getModel().addTableModelListener(new TableModelListener() {
+            @Override
+            public void tableChanged(TableModelEvent e) {
+                // One of 3 things can be happening here:
+                // First is row 0 is being edited. In normal mode, nothing
+                // special needs to be done. In Auto Panelize mode, the
+                // computed panel PCBs (that is, the ones PCB derived from
+                // the panel parameters) must be updated. The second is that
+                // row 1 or higher needs to be edited. This can only happen when
+                // NOT in autopanelize mode as the editing is blocked in the
+                // BoardLocationTableModel class. Finally, when the table wants
+                // to update itself (eg due to TableDataChange event being
+                // fired) it
+                // will set the first row to 0 and the last row to 2147483647
+                // (maxint). This is a behavior of the table...we simply detect
+                // it here to ascertain the mode
+
+                // Below, we check for each of these.
+                if (e.getFirstRow() == 0 && e.getLastRow() == 0) {
+                    // Here, the first row is being edited. The function below
+                    // will check if
+                    // we're in autopanelize mode and update other rows
+                    // accordingly
+                    populatePanelSettingsIntoBoardLocations();
+                }
+                else if (e.getFirstRow() > 0 && e.getLastRow() <= Integer.MAX_VALUE) {
+                    // Here, we're not in auto panelize mode (since row 1 or
+                    // higher could be edited.
+                    // Do nothing
+                }
+                else if (e.getFirstRow() == 0 && e.getLastRow() == Integer.MAX_VALUE) {
+                    // A generic table update in response to TableDataChange
+                    // event
+                	updatePanelizationIconState();
+                	
+                }
+
+            }
+        });
 
         boardLocationsTable.getSelectionModel()
                 .addListSelectionListener(new ListSelectionListener() {
@@ -182,14 +258,20 @@ public class JobPanel extends JPanel {
                         }
                         BoardLocation boardLocation = getSelectedBoardLocation();
                         boardLocationSelectionActionGroup.setEnabled(boardLocation != null);
+
+                        updatePanelizationIconState();
+
                         jobPlacementsPanel.setBoardLocation(boardLocation);
                         jobPastePanel.setBoardLocation(boardLocation);
+                        Configuration.get().getBus()
+                                .post(new BoardLocationSelectedEvent(boardLocation, JobPanel.this));
                     }
                 });
 
         setLayout(new BorderLayout(0, 0));
 
         splitPane = new JSplitPane();
+        splitPane.setOrientation(JSplitPane.VERTICAL_SPLIT);
         splitPane.setBorder(null);
         splitPane.setContinuousLayout(true);
         splitPane
@@ -220,11 +302,17 @@ public class JobPanel extends JPanel {
         btnStopJob.setHideActionText(true);
         toolBarBoards.add(btnStopJob);
         toolBarBoards.addSeparator();
-        JButton btnNewBoard = new JButton(newBoardAction);
-        btnNewBoard.setHideActionText(true);
-        toolBarBoards.add(btnNewBoard);
         JButton btnAddBoard = new JButton(addBoardAction);
         btnAddBoard.setHideActionText(true);
+        btnAddBoard.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                JPopupMenu menu = new JPopupMenu();
+                menu.add(new JMenuItem(addNewBoardAction));
+                menu.add(new JMenuItem(addExistingBoardAction));
+                menu.show(btnAddBoard, (int) btnAddBoard.getWidth(), (int) btnAddBoard.getHeight());
+            }
+        });
         toolBarBoards.add(btnAddBoard);
         JButton btnRemoveBoard = new JButton(removeBoardAction);
         btnRemoveBoard.setHideActionText(true);
@@ -242,6 +330,10 @@ public class JobPanel extends JPanel {
         btnPositionCameraBoardLocation.setHideActionText(true);
         toolBarBoards.add(btnPositionCameraBoardLocation);
 
+        JButton btnPositionCameraBoardLocationNext =
+                new JButton(moveCameraToBoardLocationNextAction);
+        btnPositionCameraBoardLocationNext.setHideActionText(true);
+        toolBarBoards.add(btnPositionCameraBoardLocationNext);
         JButton btnPositionToolBoardLocation = new JButton(moveToolToBoardLocationAction);
         btnPositionToolBoardLocation.setHideActionText(true);
         toolBarBoards.add(btnPositionToolBoardLocation);
@@ -254,6 +346,16 @@ public class JobPanel extends JPanel {
         JButton btnFiducialCheck = new JButton(fiducialCheckAction);
         toolBarBoards.add(btnFiducialCheck);
         btnFiducialCheck.setHideActionText(true);
+        toolBarBoards.addSeparator();
+        JButton btnPanelize = new JButton(panelizeAction);
+        toolBarBoards.add(btnPanelize);
+        btnPanelize.setHideActionText(true);
+        JButton btnPanelizeXOut = new JButton(panelizeXOutAction);
+        toolBarBoards.add(btnPanelizeXOut);
+        btnPanelizeXOut.setHideActionText(true);
+        JButton btnPanelizeFidCheck = new JButton(panelizeFiducialCheck);
+        toolBarBoards.add(btnPanelizeFidCheck);
+        btnPanelizeFidCheck.setHideActionText(true);
 
         pnlBoards.add(new JScrollPane(boardLocationsTable));
         JPanel pnlRight = new JPanel();
@@ -271,6 +373,7 @@ public class JobPanel extends JPanel {
         add(splitPane);
 
         mnOpenRecent = new JMenu("Open Recent Job...");
+        mnOpenRecent.setMnemonic(KeyEvent.VK_R);
         loadRecentJobs();
 
         Configuration.get().addListener(new ConfigurationListener.Adapter() {
@@ -286,7 +389,8 @@ public class JobPanel extends JPanel {
 
                 if (machine.getPasteDispenseJobProcessor() != null) {
                     tabbedPane.addTab("Solder Paste", null, jobPastePanel, null);
-                    machine.getPasteDispenseJobProcessor().addTextStatusListener(textStatusListener);
+                    machine.getPasteDispenseJobProcessor()
+                            .addTextStatusListener(textStatusListener);
                 }
 
                 // Create an empty Job if one is not loaded
@@ -299,6 +403,57 @@ public class JobPanel extends JPanel {
         fsm.addPropertyChangeListener((e) -> {
             updateJobActions();
         });
+
+        Configuration.get().getBus().register(this);
+    }
+    
+    public JTable getBoardLocationsTable() {
+        return boardLocationsTable;
+    }
+
+    @Subscribe
+    public void boardLocationSelected(BoardLocationSelectedEvent event) {
+        if (event.source == this) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            MainFrame.get().showTab("Job");
+
+            selectBoardLocation(event.boardLocation);
+        });
+    }
+
+    @Subscribe
+    public void placementSelected(PlacementSelectedEvent event) {
+        if (event.source == this || event.source == jobPlacementsPanel) {
+            return;
+        }
+        SwingUtilities.invokeLater(() -> {
+            MainFrame.get().showTab("Job");
+
+            showTab("Pick and Place");
+
+            selectBoardLocation(event.boardLocation);
+
+            jobPlacementsPanel.selectPlacement(event.placement);
+        });
+    }
+
+    private void selectBoardLocation(BoardLocation boardLocation) {
+        for (int i = 0; i < boardLocationsTableModel.getRowCount(); i++) {
+            if (boardLocationsTableModel.getBoardLocation(i) == boardLocation) {
+                int index = boardLocationsTable.convertRowIndexToView(i);
+                boardLocationsTable.getSelectionModel().setSelectionInterval(index, index);
+                boardLocationsTable.scrollRectToVisible(
+                        new Rectangle(boardLocationsTable.getCellRect(index, 0, true)));
+                break;
+            }
+        }
+    }
+
+    private void showTab(String title) {
+        int index = tabbedPane.indexOfTab(title);
+        tabbedPane.setSelectedIndex(index);
     }
 
     public Job getJob() {
@@ -316,6 +471,7 @@ public class JobPanel extends JPanel {
         job.addPropertyChangeListener("file", titlePropertyChangeListener);
         updateTitle();
         updateJobActions();
+        Configuration.get().getBus().post(new JobLoadedEvent(job));
     }
 
     public JobPlacementsPanel getJobPlacementsPanel() {
@@ -364,6 +520,10 @@ public class JobPanel extends JPanel {
             recentJobs.remove(recentJobs.size() - 1);
         }
         saveRecentJobs();
+    }
+
+    public void refresh() {
+        boardLocationsTableModel.fireTableDataChanged();
     }
 
     public void refreshSelectedBoardRow() {
@@ -544,8 +704,19 @@ public class JobPanel extends JPanel {
                 (job.getFile() == null ? UNTITLED_JOB_FILENAME : job.getFile().getName()));
         frame.setTitle(title);
     }
+    
+    private boolean checkJobStopped() {
+        if (fsm.getState() != State.Stopped) {
+            MessageBoxes.errorBox(this, "Error", "Job must be stopped first.");
+            return false;
+        }
+        return true;
+    }
 
     public void importBoard(Class<? extends BoardImporter> boardImporterClass) {
+        if (!checkJobStopped()) {
+            return;
+        }
         if (getSelectedBoardLocation() == null) {
             MessageBoxes.errorBox(getTopLevelAncestor(), "Import Failed",
                     "Please select a board in the Jobs tab to import into.");
@@ -569,7 +740,8 @@ public class JobPanel extends JPanel {
                     existingBoard.addPlacement(placement);
                 }
                 for (BoardPad pad : importedBoard.getSolderPastePads()) {
-                    // TODO: This is a temporary hack until we redesign the importer
+                    // TODO: This is a temporary hack until we redesign the
+                    // importer
                     // interface to be more intuitive. The Gerber importer tends
                     // to return everything in Inches, so this is a method to
                     // try to get it closer to what the user expects to see.
@@ -587,8 +759,17 @@ public class JobPanel extends JPanel {
     }
 
     public final Action openJobAction = new AbstractAction("Open Job...") {
+        {
+            putValue(MNEMONIC_KEY, KeyEvent.VK_O);
+            putValue(ACCELERATOR_KEY, KeyStroke.getKeyStroke('O',
+                    Toolkit.getDefaultToolkit().getMenuShortcutKeyMask()));
+        }
+
         @Override
         public void actionPerformed(ActionEvent arg0) {
+            if (!checkJobStopped()) {
+                return;
+            }
             if (!checkForModifications()) {
                 return;
             }
@@ -617,8 +798,17 @@ public class JobPanel extends JPanel {
     };
 
     public final Action newJobAction = new AbstractAction("New Job") {
+        {
+            putValue(MNEMONIC_KEY, KeyEvent.VK_N);
+            putValue(ACCELERATOR_KEY, KeyStroke.getKeyStroke('N',
+                    Toolkit.getDefaultToolkit().getMenuShortcutKeyMask()));
+        }
+
         @Override
         public void actionPerformed(ActionEvent arg0) {
+            if (!checkJobStopped()) {
+                return;
+            }
             if (!checkForModifications()) {
                 return;
             }
@@ -627,6 +817,12 @@ public class JobPanel extends JPanel {
     };
 
     public final Action saveJobAction = new AbstractAction("Save Job") {
+        {
+            putValue(MNEMONIC_KEY, KeyEvent.VK_S);
+            putValue(ACCELERATOR_KEY, KeyStroke.getKeyStroke('S',
+                    Toolkit.getDefaultToolkit().getMenuShortcutKeyMask()));
+        }
+
         @Override
         public void actionPerformed(ActionEvent arg0) {
             saveJob();
@@ -634,6 +830,10 @@ public class JobPanel extends JPanel {
     };
 
     public final Action saveJobAsAction = new AbstractAction("Save Job As...") {
+        {
+            putValue(MNEMONIC_KEY, KeyEvent.VK_A);
+        }
+
         @Override
         public void actionPerformed(ActionEvent arg0) {
             saveJobAs();
@@ -660,31 +860,39 @@ public class JobPanel extends JPanel {
         jobProcessor.initialize(job);
         jobRun();
     }
-    
+
     public void jobRun() {
         UiUtils.submitUiMachineTask(() -> {
             // Make sure the FSM has actually transitioned to either Running or Stepping
             // before continuing so that we don't accidentally exit early. This breaks
             // the potential race condition where this task may execute before the
             // calling task (setting the FSM state) finishes.
-            while (fsm.getState() != State.Running && fsm.getState() != State.Stepping);
+            while (fsm.getState() != State.Running && fsm.getState() != State.Stepping) {
+                
+            }
+
             do {
                 if (!jobProcessor.next()) {
                     fsm.send(Message.Finished);
                 }
             } while (fsm.getState() == State.Running);
+
             return null;
         }, (e) -> {
-            
+
         }, (t) -> {
             List<String> options = new ArrayList<>();
             String retryOption = "Try Again";
             String skipOption = "Skip";
+            String ignoreContinueOption = "Ignore and Continue";
             String pauseOption = "Pause Job";
-            
+
             options.add(retryOption);
             if (jobProcessor.canSkip()) {
                 options.add(skipOption);
+            }
+            if (jobProcessor.canIgnoreContinue()) {
+            	options.add(ignoreContinueOption);
             }
             options.add(pauseOption);
             int result = JOptionPane.showOptionDialog(getTopLevelAncestor(), t.getMessage(),
@@ -700,6 +908,13 @@ public class JobPanel extends JPanel {
                     // Tell the job processor to skip the current placement and then call jobRun()
                     // to start things back up, either running or stepping.
                     jobSkip();
+                });
+            }
+            //ignore/continue
+            else if (selectedOption.equals(ignoreContinueOption)) {
+                UiUtils.messageBoxOnException(() -> {
+                    // Tell the job processor ignore error and continue as if everything were normal
+                    jobIgnoreContinue();
                 });
             }
             // Pause or cancel dialog
@@ -721,10 +936,17 @@ public class JobPanel extends JPanel {
             }
         });
     }
-    
+
     public void jobSkip() {
         UiUtils.submitUiMachineTask(() -> {
             jobProcessor.skip();
+            jobRun();
+        });
+    }
+
+    public void jobIgnoreContinue() {
+        UiUtils.submitUiMachineTask(() -> {
+            jobProcessor.ignoreContinue();
             jobRun();
         });
     }
@@ -734,7 +956,61 @@ public class JobPanel extends JPanel {
             jobProcessor.abort();
         });
     }
-    
+
+    private void updatePanelizationIconState() {
+    	// If more than board is in the job list, then autopanelize isn't allowed
+        if (getJob().isUsingPanel() == false && boardLocationsTable.getRowCount() > 1){
+        	panelizeAction.setEnabled(false);
+        	panelizeFiducialCheck.setEnabled(false);
+            panelizeXOutAction.setEnabled(false);	
+        }
+        
+        if (getJob().getBoardLocations() == null) {
+            panelizeFiducialCheck.setEnabled(false);
+            panelizeXOutAction.setEnabled(false);
+        }
+
+        // The add existing/new PC icons are only enabled IF
+        // 1. The autopanelize feature is not in use
+        if (getJob().isUsingPanel() == false) {
+            panelizeFiducialCheck.setEnabled(false);
+            panelizeXOutAction.setEnabled(false);
+            addNewBoardAction.setEnabled(true);
+            addBoardAction.setEnabled(true);            
+        }
+        else {
+            addNewBoardAction.setEnabled(false);
+            addBoardAction.setEnabled(false);
+            panelizeFiducialCheck.setEnabled(true);
+            panelizeXOutAction.setEnabled(true);
+        }
+
+        // The delete PCB icon is only enabled IF
+        // 1. autopanelize is not in use OR
+        // 2. autopanelize is in use and row 0 (first pcb) is selected
+        if (getJob().isUsingPanel() == false
+                || (getJob().isUsingPanel() && boardLocationsTable.getSelectedRow() == 0)) {
+            removeBoardAction.setEnabled(true);
+        }
+        else {
+            removeBoardAction.setEnabled(false);
+        }
+    }
+
+    public void populatePanelSettingsIntoBoardLocations() {
+        if (getJob().isUsingPanel()) {
+
+            // Here, we're using a panel and 0,0 board location has been updated. At this point,
+            // we want the panel to update the other board locations based on the offset and
+            // rotation
+            // of the 0,0 panel
+            getJob().getPanels().get(0).setLocation(getJob());
+
+            boardLocationsTableModel.fireTableDataChanged();
+            Helpers.selectFirstTableRow(boardLocationsTable);
+        }
+    }
+
     public final Action startPauseResumeJobAction = new AbstractAction() {
         {
             putValue(SMALL_ICON, Icons.start);
@@ -744,6 +1020,19 @@ public class JobPanel extends JPanel {
 
         @Override
         public void actionPerformed(ActionEvent arg0) {
+            System.out.println("isAllPlaced " + isAllPlaced());
+            if (isAllPlaced()) {
+                int ret = JOptionPane.showConfirmDialog(getTopLevelAncestor(),
+                        "All placements have been placed already. Reset all placements before starting job?",
+                        "Reset placement status?", JOptionPane.YES_NO_OPTION,
+                        JOptionPane.WARNING_MESSAGE);
+                if (ret == JOptionPane.YES_OPTION) {
+                    for (BoardLocation boardLocation : job.getBoardLocations()) {
+                        boardLocation.clearAllPlaced();
+                    }
+                    jobPlacementsPanel.refresh();
+                }
+            }
             UiUtils.messageBoxOnException(() -> {
                 fsm.send(Message.StartOrPause);
             });
@@ -779,12 +1068,40 @@ public class JobPanel extends JPanel {
             });
         }
     };
-
-    public final Action newBoardAction = new AbstractAction() {
+    
+    public final Action resetAllPlacedAction = new AbstractAction() {
         {
-            putValue(SMALL_ICON, Icons.neww);
+            putValue(NAME, "Reset All Placed");
+//            putValue(SMALL_ICON, Icons.add);
+            putValue(SHORT_DESCRIPTION, "Reset the Placed status for every placement in the job.");
+        }
+
+        @Override
+        public void actionPerformed(ActionEvent arg0) {
+            for (BoardLocation boardLocation : job.getBoardLocations()) {
+                boardLocation.clearAllPlaced();
+            }
+            jobPlacementsPanel.refresh();
+        }
+    };
+
+    public final Action addBoardAction = new AbstractAction() {
+        {
+            putValue(NAME, "Add Board...");
+            putValue(SMALL_ICON, Icons.add);
+            putValue(SHORT_DESCRIPTION, "Add a new or existing board to the job.");
+            putValue(MNEMONIC_KEY, KeyEvent.VK_A);
+        }
+
+        @Override
+        public void actionPerformed(ActionEvent arg0) {}
+    };
+
+    public final Action addNewBoardAction = new AbstractAction() {
+        {
             putValue(NAME, "New Board...");
             putValue(SHORT_DESCRIPTION, "Create a new board and add it to the job.");
+            putValue(MNEMONIC_KEY, KeyEvent.VK_N);
         }
 
         @Override
@@ -818,14 +1135,15 @@ public class JobPanel extends JPanel {
                 e.printStackTrace();
                 MessageBoxes.errorBox(frame, "Unable to create new board", e.getMessage());
             }
+            updatePanelizationIconState();
         }
     };
 
-    public final Action addBoardAction = new AbstractAction() {
+    public final Action addExistingBoardAction = new AbstractAction() {
         {
-            putValue(SMALL_ICON, Icons.add);
-            putValue(NAME, "Add Board...");
+            putValue(NAME, "Existing Board...");
             putValue(SHORT_DESCRIPTION, "Add an existing board to the job.");
+            putValue(MNEMONIC_KEY, KeyEvent.VK_E);
         }
 
         @Override
@@ -856,6 +1174,7 @@ public class JobPanel extends JPanel {
                 e.printStackTrace();
                 MessageBoxes.errorBox(frame, "Board load failed", e.getMessage());
             }
+            updatePanelizationIconState();
         }
     };
 
@@ -864,17 +1183,27 @@ public class JobPanel extends JPanel {
             putValue(SMALL_ICON, Icons.delete);
             putValue(NAME, "Remove Board");
             putValue(SHORT_DESCRIPTION, "Remove the selected board from the job.");
+            putValue(MNEMONIC_KEY, KeyEvent.VK_R);
         }
 
         @Override
         public void actionPerformed(ActionEvent arg0) {
-            int index = boardLocationsTable.getSelectedRow();
-            if (index != -1) {
-                index = boardLocationsTable.convertRowIndexToModel(index);
-                BoardLocation boardLocation = getJob().getBoardLocations().get(index);
-                getJob().removeBoardLocation(boardLocation);
+            if (getJob().isUsingPanel()) {
+                getJob().removeAllBoards();
+                getJob().removeAllPanels();
                 boardLocationsTableModel.fireTableDataChanged();
+                addNewBoardAction.setEnabled(true);
+                addExistingBoardAction.setEnabled(true);
+                removeBoardAction.setEnabled(true);
             }
+            else {
+                BoardLocation boardLocation = getSelectedBoardLocation();
+                if (boardLocation != null) {
+                    getJob().removeBoardLocation(boardLocation);
+                    boardLocationsTableModel.fireTableDataChanged();
+                }
+            }
+            updatePanelizationIconState();
         }
     };
 
@@ -936,6 +1265,34 @@ public class JobPanel extends JPanel {
                     });
                 }
             };
+    public final Action moveCameraToBoardLocationNextAction =
+            new AbstractAction("Move Camera To Board Location") {
+                {
+                    putValue(SMALL_ICON, Icons.centerCameraMoveNext);
+                    putValue(NAME, "Move Camera To Board Location and Move to the Next Board");
+                    putValue(SHORT_DESCRIPTION,
+                            "Position the camera at the board's location and move to the next board.");
+                }
+
+                @Override
+                public void actionPerformed(ActionEvent arg0) {
+                    UiUtils.submitUiMachineTask(() -> {
+                        // Need to keep current focus owner so that the space bar can be
+                        // used after the initial click. Otherwise, button focus is lost
+                        // when table is updated
+                        Component comp = MainFrame.get().getFocusOwner();
+                        HeadMountable tool = MainFrame.get().getMachineControls().getSelectedTool();
+                        Camera camera = tool.getHead().getDefaultCamera();
+                        MainFrame.get().getCameraViews().ensureCameraVisible(camera);
+                        Location location = getSelectedBoardLocation().getLocation();
+                        MovableUtils.moveToLocationAtSafeZ(camera, location);
+                        Helpers.selectNextTableRow(boardLocationsTable);
+                        if (comp != null) {
+                            comp.requestFocus();
+                        }
+                    });
+                }
+            };
 
     public final Action moveToolToBoardLocationAction = new AbstractAction() {
         {
@@ -993,6 +1350,69 @@ public class JobPanel extends JPanel {
         }
     };
 
+    public final Action panelizeAction = new AbstractAction() {
+        {
+            putValue(SMALL_ICON, Icons.autoPanelize);
+            putValue(NAME, "Panelize Board");
+            putValue(SHORT_DESCRIPTION, "Autopanelize the loaded board into an array");
+        }
+
+        @Override
+        public void actionPerformed(ActionEvent arg0) {
+
+            if (job.isUsingPanel() == false) {
+                if (job.getBoardLocations().size() > 1) {
+                    MessageBoxes.errorBox(frame, "Panelize Error",
+                            "Panelization can only occur on a single board.");
+                    return;
+                }
+            }
+
+            DlgAutoPanelize dlg = new DlgAutoPanelize(frame, JobPanel.this);
+            dlg.setVisible(true);
+        }
+    };
+
+    public final Action panelizeXOutAction = new AbstractAction() {
+        {
+            putValue(SMALL_ICON, Icons.autoPanelizeXOut);
+            putValue(NAME, "Xout Panelized");
+            putValue(SHORT_DESCRIPTION, "Skip certain PCBs on Panelized Boards");
+        }
+
+        @Override
+        public void actionPerformed(ActionEvent arg0) {
+            DlgPanelXOut dlg = new DlgPanelXOut(frame, JobPanel.this);
+            dlg.setVisible(true);
+        }
+    };
+
+    public final Action panelizeFiducialCheck = new AbstractAction() {
+        {
+            putValue(SMALL_ICON, Icons.autoPanelizeFidCheck);
+            putValue(NAME, "Panelized Fid Check");
+            putValue(SHORT_DESCRIPTION,
+                    "Perform a fiducial check on a panel and update its position and rotation");
+        }
+
+        @Override
+        public void actionPerformed(ActionEvent arg0) {
+            UiUtils.submitUiMachineTask(() -> {
+                Helpers.selectFirstTableRow(boardLocationsTable);
+                Location location = Configuration.get().getMachine().getFiducialLocator()
+                        .locateBoard(getSelectedBoardLocation(), true);
+                getSelectedBoardLocation().setLocation(location);
+                refreshSelectedBoardRow();
+                HeadMountable tool = MainFrame.get().getMachineControls().getSelectedTool();
+                Camera camera = tool.getHead().getDefaultCamera();
+                MainFrame.get().getCameraViews().ensureCameraVisible(camera);
+                MovableUtils.moveToLocationAtSafeZ(camera, location);
+
+            });
+        }
+
+    };
+
     public class OpenRecentJobAction extends AbstractAction {
         private final File file;
 
@@ -1003,6 +1423,9 @@ public class JobPanel extends JPanel {
 
         @Override
         public void actionPerformed(ActionEvent arg0) {
+            if (!checkJobStopped()) {
+                return;
+            }
             if (!checkForModifications()) {
                 return;
             }
@@ -1045,11 +1468,33 @@ public class JobPanel extends JPanel {
                 @Override
                 public void propertyChange(PropertyChangeEvent evt) {
                     updateTitle();
-                    jobSaveActionGroup.setEnabled(getJob().isDirty());
                 }
             };
-            
+
     private final TextStatusListener textStatusListener = text -> {
         MainFrame.get().setStatus(text);
+        // Repainting here refreshes the tables, which contain status that needs to be updated.
+        // Would be better to have property notifiers but this is going to have to do for now.
+        repaint();
     };
+    
+    boolean isAllPlaced() {
+    	for (BoardLocation boardLocation : job.getBoardLocations()) {
+    	    if (!boardLocation.isEnabled()) {
+    	        continue;
+    	    }
+        	for (Placement placement : boardLocation.getBoard().getPlacements()) {
+        	    if (placement.getType() != Type.Place) {
+        	        continue;
+        	    }
+        	    if (placement.getSide() != boardLocation.getSide()) {
+        	        continue;
+        	    }
+        		if (!boardLocation.getPlaced(placement.getId())) {
+    				return false;
+        		}
+        	}
+    	}
+    	return true;
+    }
 }

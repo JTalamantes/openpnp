@@ -23,12 +23,11 @@ import java.io.Closeable;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
+import java.util.Collections;
 
 import org.openpnp.model.Location;
 
 import com.google.common.util.concurrent.FutureCallback;
-
-
 
 /**
  * Machine represents the pick and place machine itself. It provides the information and interface
@@ -44,6 +43,17 @@ public interface Machine extends WizardConfigurable, PropertySheetHolder, Closea
     public List<Head> getHeads();
 
     public Head getHead(String id);
+
+    /**
+     * Gets a List of Signalers attached to the Machine.
+     *
+     * @return
+     */
+    public List<Signaler> getSignalers();
+
+    public Signaler getSignaler(String id);
+
+    public Signaler getSignalerByName(String name);
 
     /**
      * Gets a List of Feeders attached to the Machine.
@@ -125,6 +135,10 @@ public interface Machine extends WizardConfigurable, PropertySheetHolder, Closea
 
     public List<Class<? extends Camera>> getCompatibleCameraClasses();
 
+    public List<Class<? extends Nozzle>> getCompatibleNozzleClasses();
+
+    public List<Class<? extends Actuator>> getCompatibleActuatorClasses();
+
     public void addFeeder(Feeder feeder) throws Exception;
 
     public void removeFeeder(Feeder feeder);
@@ -132,6 +146,10 @@ public interface Machine extends WizardConfigurable, PropertySheetHolder, Closea
     public void addCamera(Camera camera) throws Exception;
 
     public void removeCamera(Camera camera);
+
+    public void addActuator(Actuator actuator) throws Exception;
+
+    public void removeActuator(Actuator actuator);
 
     public PnpJobProcessor getPnpJobProcessor();
     
@@ -175,7 +193,7 @@ public interface Machine extends WizardConfigurable, PropertySheetHolder, Closea
 
     public Head getDefaultHead() throws Exception;
 
-    public PartAlignment getPartAlignment();
+    public List<PartAlignment> getPartAlignments();
 
     public FiducialLocator getFiducialLocator();
 
@@ -184,4 +202,8 @@ public interface Machine extends WizardConfigurable, PropertySheetHolder, Closea
     public void setSpeed(double speed);
 
     public double getSpeed();
+    
+    public Object getProperty(String name);
+    
+    public void setProperty(String name, Object value);
 }

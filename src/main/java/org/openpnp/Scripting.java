@@ -1,7 +1,9 @@
 package org.openpnp;
 
 import java.awt.Desktop;
+import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
 import java.io.File;
 import java.io.FileReader;
 import java.nio.file.FileSystems;
@@ -12,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -21,28 +24,28 @@ import javax.script.ScriptEngineManager;
 import javax.swing.AbstractAction;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
+import javax.swing.KeyStroke;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.FilenameUtils;
 import org.openpnp.gui.MainFrame;
 import org.openpnp.model.Configuration;
 import org.openpnp.util.UiUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.pmw.tinylog.Logger;
 
 import com.google.common.io.Files;
 
-public class Scripting {
-    private static final Logger logger = LoggerFactory.getLogger(Scripting.class);
+import bsh.engine.BshScriptEngineFactory;
 
-    final JMenu menu;
+public class Scripting {
+    JMenu menu;
     final ScriptEngineManager manager = new ScriptEngineManager();
     final String[] extensions;
     File scriptsDirectory;
+    File eventsDirectory;
     WatchService watcher;
 
-    public Scripting(JMenu menu) {
-        this.menu = menu;
-
+    public Scripting() {
         // Collect all the script filename extensions we know how to handle from the list of
         // available scripting engines.
         List<ScriptEngineFactory> factories = manager.getEngineFactories();
@@ -52,6 +55,13 @@ public class Scripting {
                 extensions.add(ext.toLowerCase());
             }
         }
+        
+        // Hack to fix BSH on Windows. See https://github.com/openpnp/openpnp/issues/462
+        manager.registerEngineExtension("bsh", new BshScriptEngineFactory());
+        manager.registerEngineExtension("java", new BshScriptEngineFactory());
+        extensions.add("bsh");
+        extensions.add("java");
+
         this.extensions = extensions.toArray(new String[] {});
 
         this.scriptsDirectory =
@@ -61,51 +71,56 @@ public class Scripting {
         // over.
         if (!getScriptsDirectory().exists()) {
             getScriptsDirectory().mkdirs();
-            // TODO: It would be better if we just copied all the files from the Examples
-            // directory in the jar, but this is relatively difficult to do.
-            // There is some information on how to do it in:
-            // http://stackoverflow.com/questions/1386809/copy-directory-from-a-jar-file
-            File examplesDir = new File(getScriptsDirectory(), "Examples");
-            examplesDir.mkdirs();
-            String[] exampleScripts =
-                    new String[] {"Call_Java.js", "Hello_World.js", "Print_Scripting_Info.js",
-                            "Reset_Strip_Feeders.js", "Move_Machine.js", "Utility.js"};
-            for (String name : exampleScripts) {
-                try {
-                    FileUtils.copyURLToFile(
-                            ClassLoader.getSystemResource("scripts/Examples/" + name),
-                            new File(examplesDir, name));
+        }
+
+        // TODO: It would be better if we just copied all the files from the Examples
+        // directory in the jar, but this is relatively difficult to do.
+        // There is some information on how to do it in:
+        // http://stackoverflow.com/questions/1386809/copy-directory-from-a-jar-file
+        File examplesDir = new File(getScriptsDirectory(), "Examples");
+        examplesDir.mkdirs();
+        String[] exampleScripts =
+                new String[] {
+                        "JavaScript/Call_Java.js", 
+                        "JavaScript/Hello_World.js", 
+                        "JavaScript/Move_Machine.js", 
+                        "JavaScript/Print_Scripting_Info.js",
+                        "JavaScript/QrCodeXout.js",
+                        "JavaScript/Reset_Strip_Feeders.js", 
+                        "JavaScript/Utility.js", 
+                        "Python/call_java.py", 
+                        "Python/move_machine.py", 
+                        "Python/print_hallo_openpnp.py",
+                        "Python/print_methods_vars.py", 
+                        "Python/print_nozzle_info.py", 
+                        "Python/print_scripting_info.py",
+                        "Python/use_module.py", 
+                        "Python/utility.py"
+                        };
+        for (String name : exampleScripts) {
+            try {
+                File file = new File(examplesDir, name);
+                if (file.exists()) {
+                    continue;
                 }
-                catch (Exception e) {
-                    e.printStackTrace();
-                }
+                FileUtils.copyURLToFile(ClassLoader.getSystemResource("scripts/Examples/" + name),
+                        file);
+            }
+            catch (Exception e) {
+                e.printStackTrace();
             }
         }
 
-        // Add a separator and the Refresh Scripts and Open Scripts Directory items
-        menu.addSeparator();
-        menu.add(new AbstractAction("Refresh Scripts") {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                synchronizeMenu(menu, getScriptsDirectory());
-            }
-        });
-        menu.add(new AbstractAction("Open Scripts Directory") {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                UiUtils.messageBoxOnException(() -> {
-                    if (Desktop.isDesktopSupported()) {
-                        Desktop.getDesktop().open(getScriptsDirectory());
-                    }
-                });
-            }
-        });
+        this.eventsDirectory = new File(scriptsDirectory, "Events");
+        if (!eventsDirectory.exists()) {
+            eventsDirectory.mkdirs();
+        }
 
         // Add a file watcher so that we can be notified if any scripts change
         try {
             watcher = FileSystems.getDefault().newWatchService();
             watchDirectory(getScriptsDirectory());
-            new Thread(() -> {
+            Thread thread = new Thread(() -> {
                 for (;;) {
                     try {
                         // wait for an event
@@ -119,11 +134,43 @@ public class Scripting {
                         e.printStackTrace();
                     }
                 }
-            }).start();
+            });
+            thread.setDaemon(true);
+            thread.start();
         }
         catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    public void setMenu(JMenu menu) {
+        this.menu = menu;
+        // Add a separator and the Refresh Scripts and Open Scripts Directory items
+        menu.addSeparator();
+        menu.add(new AbstractAction("Refresh Scripts") {
+            {
+                putValue(MNEMONIC_KEY, KeyEvent.VK_R);
+            }
+
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                synchronizeMenu(menu, getScriptsDirectory());
+            }
+        });
+        menu.add(new AbstractAction("Open Scripts Directory") {
+            {
+                putValue(MNEMONIC_KEY, KeyEvent.VK_O);
+            }
+
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                UiUtils.messageBoxOnException(() -> {
+                    if (Desktop.isDesktopSupported()) {
+                        Desktop.getDesktop().open(getScriptsDirectory());
+                    }
+                });
+            }
+        });
 
         // Synchronize the menu
         synchronizeMenu(menu, getScriptsDirectory());
@@ -144,6 +191,9 @@ public class Scripting {
     }
 
     private synchronized void synchronizeMenu(JMenu menu, File directory) {
+        if (menu == null) {
+            return;
+        }
         // Remove any menu items that don't have a matching entry in the directory
         Set<String> filenames = new HashSet<>(Arrays.asList(directory.list()));
         for (JMenuItem item : getScriptMenuItems(menu)) {
@@ -173,6 +223,12 @@ public class Scripting {
         itemNames = getScriptMenuItems(menu).stream().map(JMenuItem::getText)
                 .collect(Collectors.toSet());
         for (File d : directory.listFiles(File::isDirectory)) {
+            if (d.equals(eventsDirectory)) {
+                continue;
+            }
+            if (new File(d, ".ignore").exists()) {
+                continue;
+            }
             if (!itemNames.contains(d.getName())) {
                 JMenu m = new JMenu(d.getName());
                 addSorted(menu, m);
@@ -216,7 +272,19 @@ public class Scripting {
         return items;
     }
 
-    private void execute(File script) throws Exception {
+    public void execute(String script) throws Exception {
+        execute(new File(script), null);
+    }
+    
+    public void execute(File script) throws Exception {
+        execute(script, null);
+    }
+    
+    public void execute(String script, Map<String, Object> additionalGlobals) throws Exception {
+      execute(new File(script), additionalGlobals );
+    }
+    
+    public void execute(File script, Map<String, Object> additionalGlobals) throws Exception {
         ScriptEngine engine =
                 manager.getEngineByExtension(Files.getFileExtension(script.getName()));
 
@@ -225,10 +293,27 @@ public class Scripting {
         engine.put("gui", MainFrame.get());
         engine.put("scripting", this);
 
+        if (additionalGlobals != null) {
+            for (String name : additionalGlobals.keySet()) {
+                engine.put(name, additionalGlobals.get(name));
+            }
+        }
+
         try (FileReader reader = new FileReader(script)) {
-            engine.eval(new FileReader(script));
+            engine.eval(reader);
         }
     }
-    
-    
+
+    public void on(String event, Map<String, Object> globals) throws Exception {
+        Logger.trace("Scripting.on " + event);
+        for (File script : FileUtils.listFiles(eventsDirectory, extensions, false)) {
+            if (!script.isFile()) {
+                continue;
+            }
+            if (FilenameUtils.getBaseName(script.getName()).equals(event)) {
+                Logger.trace("Scripting.on found " + script.getName());
+                execute(script, globals);
+            }
+        }
+    }
 }

@@ -1,6 +1,7 @@
 package org.openpnp.vision.pipeline.stages;
 
 import java.awt.Color;
+import java.util.Collections;
 import java.util.List;
 
 import org.opencv.core.Mat;
@@ -10,14 +11,13 @@ import org.opencv.features2d.KeyPoint;
 import org.openpnp.vision.FluentCv;
 import org.openpnp.vision.pipeline.CvPipeline;
 import org.openpnp.vision.pipeline.CvStage;
+import org.openpnp.vision.pipeline.Stage;
 import org.openpnp.vision.pipeline.stages.convert.ColorConverter;
 import org.simpleframework.xml.Attribute;
 import org.simpleframework.xml.Element;
 import org.simpleframework.xml.convert.Convert;
 
-/**
- * Draws KeyPoints contained in a List<KeyPoint> by referencing a previous stage's model data. 
- */
+@Stage(description="Draws KeyPoints contained in a List<KeyPoint> by referencing a previous stage's model data.")
 public class DrawKeyPoints extends CvStage {
     @Element(required = false)
     @Convert(ColorConverter.class)
@@ -52,7 +52,17 @@ public class DrawKeyPoints extends CvStage {
             return null;
         }
         Mat mat = pipeline.getWorkingImage();
-        List<KeyPoint> keyPoints = (List<KeyPoint>) result.model;
+        Object model = result.model;
+        List<KeyPoint> keyPoints;
+        if (model == null ){
+            return null;
+        }
+        else if (model instanceof KeyPoint) {
+            keyPoints = Collections.singletonList((KeyPoint) model);
+        }
+        else {
+            keyPoints = (List<KeyPoint>) result.model;
+        }
         MatOfKeyPoint matOfKeyPoints = new MatOfKeyPoint();
         matOfKeyPoints.fromList(keyPoints);
         if (color == null) {

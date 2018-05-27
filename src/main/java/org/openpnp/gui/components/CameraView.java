@@ -36,6 +36,8 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
 import java.awt.event.MouseMotionAdapter;
 import java.awt.event.MouseMotionListener;
+import java.awt.event.MouseWheelEvent;
+import java.awt.event.MouseWheelListener;
 import java.awt.font.TextLayout;
 import java.awt.image.BufferedImage;
 import java.io.File;
@@ -67,13 +69,10 @@ import org.openpnp.spi.Nozzle;
 import org.openpnp.util.MovableUtils;
 import org.openpnp.util.UiUtils;
 import org.openpnp.util.XmlSerialize;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.pmw.tinylog.Logger;
 
 @SuppressWarnings("serial")
 public class CameraView extends JComponent implements CameraListener {
-    private final static Logger logger = LoggerFactory.getLogger(CameraView.class);
-
     private static final String PREF_RETICLE = "CamerView.reticle";
 
     private static final String DEFAULT_RETICLE_KEY = "DEFAULT_RETICLE_KEY";
@@ -81,11 +80,20 @@ public class CameraView extends JComponent implements CameraListener {
     private final static int HANDLE_DIAMETER = 8;
 
     private enum HandlePosition {
-        NW, N, NE, E, SE, S, SW, W
+        NW,
+        N,
+        NE,
+        E,
+        SE,
+        S,
+        SW,
+        W
     }
 
     private enum SelectionMode {
-        Resizing, Moving, Creating
+        Resizing,
+        Moving,
+        Creating
     }
 
     /**
@@ -180,27 +188,27 @@ public class CameraView extends JComponent implements CameraListener {
 
     private long flashStartTimeMs;
     private long flashLengthMs = 250;
-    
-    private boolean showName = false;
 
+    private boolean showName = false;
+    
+    private double zoom = 1d;
+    
+    private boolean dragJogging = false;
+    
+    private MouseEvent dragJoggingTarget = null;
+    
+    long lastFrameReceivedTime = 0;
+    MovingAverage fpsAverage = new MovingAverage(24);
+    double fps = 0;
+    
     public CameraView() {
         setBackground(Color.black);
         setOpaque(true);
 
-        String reticlePref = prefs.get(PREF_RETICLE, null);
-        try {
-            Reticle reticle = (Reticle) XmlSerialize.deserialize(reticlePref);
-            setDefaultReticle(reticle);
-        }
-        catch (Exception e) {
-            // logger.warn("Warning: Unable to load Reticle preference");
-        }
-
-        popupMenu = new CameraViewPopupMenu(this);
-
         addMouseListener(mouseListener);
         addMouseMotionListener(mouseMotionListener);
         addComponentListener(componentListener);
+        addMouseWheelListener(mouseWheelListener);
 
         scheduledExecutor = Executors.newSingleThreadScheduledExecutor();
 
@@ -219,6 +227,10 @@ public class CameraView extends JComponent implements CameraListener {
                 }
             }
         }, 0, 50, TimeUnit.MILLISECONDS);
+    }
+    
+    private String getReticlePrefKey() {
+        return PREF_RETICLE + "." + camera.getId();
     }
 
     public CameraView(int maximumFps) {
@@ -262,16 +274,34 @@ public class CameraView extends JComponent implements CameraListener {
         if (this.camera != null) {
             this.camera.startContinuousCapture(this, maximumFps);
         }
+        // load the reticle pref, if any
+        try {
+            String reticleXml = prefs.get(getReticlePrefKey(), null);
+            Reticle reticle = (Reticle) XmlSerialize.deserialize(reticleXml);
+            setDefaultReticle(reticle);
+        }
+        catch (Exception e) {
+            Logger.debug("Failed to load camera specific reticle, checking default.");
+            try {
+                String reticleXml = prefs.get(PREF_RETICLE, null);
+                Reticle reticle = (Reticle) XmlSerialize.deserialize(reticleXml);
+                setDefaultReticle(reticle);
+            }
+            catch (Exception e1) {
+                Logger.debug("No reticle preference found.");
+            }
+        }
+
     }
 
     public Camera getCamera() {
         return camera;
     }
-    
+
     public void setShowName(boolean showName) {
         this.showName = showName;
     }
-    
+
     public boolean isShowName() {
         return this.showName;
     }
@@ -279,7 +309,7 @@ public class CameraView extends JComponent implements CameraListener {
     public void setDefaultReticle(Reticle reticle) {
         setReticle(DEFAULT_RETICLE_KEY, reticle);
 
-        prefs.put(PREF_RETICLE, XmlSerialize.serialize(reticle));
+        prefs.put(getReticlePrefKey(), XmlSerialize.serialize(reticle));
         try {
             prefs.flush();
         }
@@ -358,8 +388,8 @@ public class CameraView extends JComponent implements CameraListener {
      * briefly show the result of image processing. This is a shortcut to
      * setCameraViewFilter(CameraViewFilter) which simply removes itself after the specified time.
      * 
-     * In addition to showing the given image, if the text parameters is not null the text
-     * will be shown during the timeout using setText().
+     * In addition to showing the given image, if the text parameters is not null the text will be
+     * shown during the timeout using setText().
      * 
      * @param image
      * @param text
@@ -418,7 +448,9 @@ public class CameraView extends JComponent implements CameraListener {
         g.drawImage(lastFrame, 0, 0, sw, sh, sx, sy, sx + sw, sy + sh, null);
         g.dispose();
 
-        while (!future.isDone());
+        while (!future.isDone()) {
+            
+        }
 
         return image;
     }
@@ -432,6 +464,9 @@ public class CameraView extends JComponent implements CameraListener {
         if (cameraViewFilter != null) {
             img = cameraViewFilter.filterCameraImage(camera, img);
         }
+        if (img == null) {
+            return;
+        }
         BufferedImage oldFrame = lastFrame;
         lastFrame = img;
         if (oldFrame == null
@@ -439,6 +474,8 @@ public class CameraView extends JComponent implements CameraListener {
                         || camera.getUnitsPerPixel() != lastUnitsPerPixel)) {
             calculateScalingData();
         }
+        fps = 1000.0 / fpsAverage.next(System.currentTimeMillis() - lastFrameReceivedTime);
+        lastFrameReceivedTime = System.currentTimeMillis();
         repaint();
     }
 
@@ -480,12 +517,15 @@ public class CameraView extends JComponent implements CameraListener {
             scaledHeight = (int) (scaledWidth * aspectRatio);
         }
 
+        scaledWidth *= zoom;
+        scaledHeight *= zoom;
+
         imageX = ins.left + (width / 2) - (scaledWidth / 2);
         imageY = ins.top + (height / 2) - (scaledHeight / 2);
 
         scaleRatioX = lastSourceWidth / (double) scaledWidth;
         scaleRatioY = lastSourceHeight / (double) scaledHeight;
-
+        
         lastUnitsPerPixel = camera.getUnitsPerPixel();
         scaledUnitsPerPixelX = lastUnitsPerPixel.getX() * scaleRatioX;
         scaledUnitsPerPixelY = lastUnitsPerPixel.getY() * scaleRatioY;
@@ -510,7 +550,8 @@ public class CameraView extends JComponent implements CameraListener {
             // Only render if there is a valid image.
             g2d.drawImage(lastFrame, imageX, imageY, scaledWidth, scaledHeight, null);
 
-            double c = camera.getLocation().getRotation();
+            double c = MainFrame.get().getMachineControls().getSelectedTool().getLocation()
+                    .getRotation();
 
             for (Reticle reticle : reticles.values()) {
                 reticle.draw(g2d, camera.getUnitsPerPixel().getUnits(), scaledUnitsPerPixelX,
@@ -521,7 +562,7 @@ public class CameraView extends JComponent implements CameraListener {
             if (text != null) {
                 drawTextOverlay(g2d, 10, 10, text);
             }
-            
+
             if (showName) {
                 Dimension dim = measureTextOverlay(g2d, camera.getName());
                 drawTextOverlay(g2d, 10, height - dim.height - 10, camera.getName());
@@ -534,6 +575,8 @@ public class CameraView extends JComponent implements CameraListener {
             if (selectionEnabled && selection != null) {
                 paintSelection(g2d);
             }
+
+            paintDragJogging(g2d);
         }
         else {
             g.setColor(Color.red);
@@ -549,6 +592,17 @@ public class CameraView extends JComponent implements CameraListener {
             g2d.setColor(new Color(1f, 1f, 1f, alpha));
             g2d.fillRect(0, 0, getWidth(), getHeight());
         }
+    }
+    
+    private void paintDragJogging(Graphics2D g2d) {
+        if (!isDragJogging() || dragJoggingTarget == null) {
+            return;
+        }
+        Insets ins = getInsets();
+        int width = getWidth() - ins.left - ins.right;
+        int height = getHeight() - ins.top - ins.bottom;
+        g2d.setColor(Color.white);
+        g2d.drawLine(width / 2, height / 2, dragJoggingTarget.getX(), dragJoggingTarget.getY());
     }
 
     private void paintSelection(Graphics2D g2d) {
@@ -588,8 +642,6 @@ public class CameraView extends JComponent implements CameraListener {
         if (selectionTextDelegate != null) {
             String text = selectionTextDelegate.getSelectionText(this);
             if (text != null) {
-                // TODO: Be awesome like Apple and move the overlay inside
-                // the rect if it goes past the edge of the window
                 drawTextOverlay(g2d, (int) (rx + rw + 6), (int) (ry + rh + 6), text);
             }
         }
@@ -750,7 +802,7 @@ public class CameraView extends JComponent implements CameraListener {
             yPen += interLineSpacing;
         }
     }
-    
+
     private static Dimension measureTextOverlay(Graphics2D g2d, String text) {
         Insets insets = new Insets(10, 10, 10, 10);
         int interLineSpacing = 4;
@@ -767,16 +819,20 @@ public class CameraView extends JComponent implements CameraListener {
             textLayouts.add(textLayout);
         }
         textHeight -= interLineSpacing;
-        return new Dimension(textWidth + insets.left + insets.right, textHeight + insets.top + insets.bottom);
+        return new Dimension(textWidth + insets.left + insets.right,
+                textHeight + insets.top + insets.bottom);
     }
 
-    private static void drawImageInfo(Graphics2D g2d, int topLeftX, int topLeftY,
+    private void drawImageInfo(Graphics2D g2d, int topLeftX, int topLeftY,
             BufferedImage image) {
         if (image == null) {
             return;
         }
-        String text = String.format("Resolution: %d x %d\nHistogram:", image.getWidth(),
-                image.getHeight());
+        String text = String.format("Resolution: %d x %d\nZoom: %d%%\nFPS: %.1f\nHistogram:", 
+                image.getWidth(),
+                image.getHeight(), 
+                (int) (zoom * 100),
+                fps);
         Insets insets = new Insets(10, 10, 10, 10);
         int interLineSpacing = 4;
         int cornerRadius = 8;
@@ -1220,6 +1276,28 @@ public class CameraView extends JComponent implements CameraListener {
         selectionMode = null;
         selectionActiveHandle = null;
     }
+    
+    private void dragJoggingBegin(MouseEvent e) {
+        this.dragJogging = true;
+        this.dragJoggingTarget = e;
+        repaint();
+    }
+    
+    private void dragJoggingContinue(MouseEvent e) {
+        this.dragJoggingTarget = e;
+        repaint();
+    }
+    
+    private void dragJoggingEnd(MouseEvent e) {
+        this.dragJogging = false;
+        this.dragJoggingTarget = null;
+        repaint();
+        moveToClick(e);
+    }
+    
+    private boolean isDragJogging() {
+        return this.dragJogging;
+    }
 
     private MouseListener mouseListener = new MouseAdapter() {
         @Override
@@ -1239,7 +1317,7 @@ public class CameraView extends JComponent implements CameraListener {
         @Override
         public void mousePressed(MouseEvent e) {
             if (e.isPopupTrigger()) {
-                popupMenu.show(e.getComponent(), e.getX(), e.getY());
+                new CameraViewPopupMenu(CameraView.this).show(e.getComponent(), e.getX(), e.getY());
                 return;
             }
             else if (e.isShiftDown()) {
@@ -1253,8 +1331,11 @@ public class CameraView extends JComponent implements CameraListener {
         @Override
         public void mouseReleased(MouseEvent e) {
             if (e.isPopupTrigger()) {
-                popupMenu.show(e.getComponent(), e.getX(), e.getY());
+                new CameraViewPopupMenu(CameraView.this).show(e.getComponent(), e.getX(), e.getY());
                 return;
+            }
+            else if (isDragJogging()) {
+                dragJoggingEnd(e);
             }
             else {
                 endSelection();
@@ -1273,6 +1354,12 @@ public class CameraView extends JComponent implements CameraListener {
             if (selectionEnabled) {
                 continueSelection(e);
             }
+            else if (!isDragJogging()) {
+                dragJoggingBegin(e);
+            }
+            else if (isDragJogging()) {
+                dragJoggingContinue(e);
+            }
         }
     };
 
@@ -1280,6 +1367,17 @@ public class CameraView extends JComponent implements CameraListener {
         @Override
         public void componentResized(ComponentEvent e) {
             calculateScalingData();
+        }
+    };
+    
+    private MouseWheelListener mouseWheelListener = new MouseWheelListener() {
+        @Override
+        public void mouseWheelMoved(MouseWheelEvent e) {
+            zoom -= e.getPreciseWheelRotation() * 0.01d;
+            zoom = Math.max(zoom, 1.0d);
+            zoom = Math.min(zoom, 100d);
+            calculateScalingData();
+            repaint();
         }
     };
 
@@ -1297,4 +1395,28 @@ public class CameraView extends JComponent implements CameraListener {
                     return text;
                 }
             };
+            
+    // From https://stackoverflow.com/questions/3793400/is-there-a-function-in-java-to-get-moving-average/42407811#42407811
+    static class MovingAverage {
+        private long [] window;
+        private int n, insert;
+        private long sum;
+
+        public MovingAverage(int size) {
+            window = new long[size];
+            insert = 0;
+            sum = 0;
+        }
+
+        public double next(long val) {
+            if (n < window.length)  {
+                n++;
+            }
+            sum -= window[insert];
+            sum += val;
+            window[insert] = val;
+            insert = (insert + 1) % window.length;
+            return (double)sum / n;
+        }
+    }            
 }

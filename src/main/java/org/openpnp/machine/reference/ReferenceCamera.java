@@ -19,8 +19,17 @@
 
 package org.openpnp.machine.reference;
 
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.event.ActionEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
+
+import javax.swing.AbstractAction;
+import javax.swing.Action;
+import javax.swing.JOptionPane;
 
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
@@ -28,8 +37,13 @@ import org.opencv.core.Mat;
 import org.opencv.core.Point;
 import org.opencv.core.Rect;
 import org.opencv.core.RotatedRect;
+import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
-import org.openpnp.ConfigurationListener;
+import org.openpnp.gui.MainFrame;
+import org.openpnp.gui.support.Icons;
+import org.openpnp.gui.support.PropertySheetWizardAdapter;
+import org.openpnp.gui.wizards.CameraConfigurationWizard;
+import org.openpnp.model.AbstractModelObject;
 import org.openpnp.model.Configuration;
 import org.openpnp.model.Length;
 import org.openpnp.model.LengthUnit;
@@ -39,12 +53,11 @@ import org.openpnp.util.OpenCvUtils;
 import org.openpnp.vision.LensCalibration;
 import org.openpnp.vision.LensCalibration.LensModel;
 import org.openpnp.vision.LensCalibration.Pattern;
+import org.pmw.tinylog.Logger;
 import org.simpleframework.xml.Attribute;
 import org.simpleframework.xml.Element;
 import org.simpleframework.xml.core.Commit;
 import org.simpleframework.xml.core.Persist;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public abstract class ReferenceCamera extends AbstractCamera implements ReferenceHeadMountable {
     static {
@@ -52,8 +65,10 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
         System.loadLibrary(org.opencv.core.Core.NATIVE_LIBRARY_NAME);
     }
 
-    protected final static Logger logger = LoggerFactory.getLogger(ReferenceCamera.class);
-
+    private static final int CAPTURE_RETRY_COUNT = 10;
+    
+    private static BufferedImage CAPTURE_ERROR_IMAGE = null;
+    
     @Element(required = false)
     private Location headOffsets = new Location(LengthUnit.Millimeters);
 
@@ -80,10 +95,19 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
 
     @Attribute(required = false)
     protected int cropHeight = 0;
+    
+    @Attribute(required = false)
+    protected int scaleWidth = 0;
+    
+    @Attribute(required = false)
+    protected int scaleHeight = 0;
+    
+    @Attribute(required = false)
+    protected boolean deinterlace;
 
     @Element(required = false)
     private LensCalibrationParams calibration = new LensCalibrationParams();
-
+    
     private boolean calibrating;
     private CalibrationCallback calibrationCallback;
     private int calibrationCountGoal = 25;
@@ -91,20 +115,83 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
     private Mat undistortionMap1;
     private Mat undistortionMap2;
 
-    protected ReferenceMachine machine;
-    protected ReferenceDriver driver;
-
-
     private LensCalibration lensCalibration;
-
+    
     public ReferenceCamera() {
-        Configuration.get().addListener(new ConfigurationListener.Adapter() {
-            @Override
-            public void configurationLoaded(Configuration configuration) throws Exception {
-                machine = (ReferenceMachine) configuration.getMachine();
-                driver = machine.getDriver();
+    }
+    
+    @Override
+    public BufferedImage capture() {
+        try {
+            Map<String, Object> globals = new HashMap<>();
+            globals.put("camera", this);
+            Configuration.get().getScripting().on("Camera.BeforeCapture", globals);
+        }
+        catch (Exception e) {
+            Logger.warn(e);
+        }
+        BufferedImage image = safeInternalCapture();
+        try {
+            Map<String, Object> globals = new HashMap<>();
+            globals.put("camera", this);
+            Configuration.get().getScripting().on("Camera.AfterCapture", globals);
+        }
+        catch (Exception e) {
+            Logger.warn(e);
+        }
+        return image;
+    }
+    
+    protected abstract BufferedImage internalCapture();
+    
+    /**
+     * Wraps internalCapture() to ensure that a null image is never returned. Attempts to
+     * retry capture if the capture returns null and if no image can be captured returns a
+     * default image. Several of the low level camera drivers return null when there is a
+     * capture error, but these are often temporary and we would prefer not to have bad
+     * images returned. The retry is intended to smooth this out.
+     * @return
+     */
+    protected synchronized BufferedImage safeInternalCapture() {
+        for (int i = 0; i < CAPTURE_RETRY_COUNT; i++) {
+            BufferedImage image = internalCapture();
+            if (image != null) {
+                return image;
             }
-        });
+            Logger.trace("Camera {} failed to return an image. Retrying.", this);
+        }
+        if (CAPTURE_ERROR_IMAGE == null) {
+            CAPTURE_ERROR_IMAGE = new BufferedImage(640, 480, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g = (Graphics2D) CAPTURE_ERROR_IMAGE.createGraphics();
+            g.setColor(Color.black);
+            g.fillRect(0, 0, 640, 480);
+            g.setColor(Color.red);
+            g.drawLine(0, 0, 640, 480);
+            g.drawLine(640, 0, 0, 480);
+            g.dispose();
+        }
+        Logger.warn("Camera {} failed to return an image after {} tries.", this, CAPTURE_RETRY_COUNT);
+        return CAPTURE_ERROR_IMAGE;
+    }
+    
+    @Override
+    public synchronized int getWidth() {
+        if (width == null) {
+            BufferedImage image = safeInternalCapture();
+            width = image.getWidth();
+            height = image.getHeight();
+        }
+        return width;
+    }
+
+    @Override
+    public synchronized int getHeight() {
+        if (height == null) {
+            BufferedImage image = safeInternalCapture();
+            width = image.getWidth();
+            height = image.getHeight();
+        }
+        return height;
     }
 
     @Override
@@ -119,19 +206,19 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
 
     @Override
     public void moveTo(Location location, double speed) throws Exception {
-        logger.debug("moveTo({}, {})", location, speed);
-        driver.moveTo(this, location, speed);
-        machine.fireMachineHeadActivity(head);
+        Logger.debug("moveTo({}, {})", location, speed);
+        getDriver().moveTo(this, location, getHead().getMaxPartSpeed() * speed);
+        getMachine().fireMachineHeadActivity(head);
     }
 
     @Override
     public void moveToSafeZ(double speed) throws Exception {
-        logger.debug("{}.moveToSafeZ({})", getName(), speed);
+        Logger.debug("{}.moveToSafeZ({})", getName(), speed);
         Length safeZ = this.safeZ.convertToUnits(getLocation().getUnits());
         Location l = new Location(getLocation().getUnits(), Double.NaN, Double.NaN,
                 safeZ.getValue(), Double.NaN);
-        driver.moveTo(this, l, speed);
-        machine.fireMachineHeadActivity(head);
+        getDriver().moveTo(this, l, getHead().getMaxPartSpeed() * speed);
+        getMachine().fireMachineHeadActivity(head);
     }
 
     public double getRotation() {
@@ -190,6 +277,30 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
         this.cropHeight = cropHeight;
     }
 
+    public int getScaleWidth() {
+        return scaleWidth;
+    }
+
+    public void setScaleWidth(int scaleWidth) {
+        this.scaleWidth = scaleWidth;
+    }
+
+    public int getScaleHeight() {
+        return scaleHeight;
+    }
+
+    public void setScaleHeight(int scaleHeight) {
+        this.scaleHeight = scaleHeight;
+    }
+    
+    public boolean isDeinterlace() {
+        return deinterlace;
+    }
+
+    public void setDeinterlace(boolean deinterlace) {
+        this.deinterlace = deinterlace;
+    }
+
     protected BufferedImage transformImage(BufferedImage image) {
         Mat mat = OpenCvUtils.toMat(image);
 
@@ -200,9 +311,13 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
         mat = undistort(mat);
 
         // apply affine transformations
+        mat = scale(mat, scaleWidth, scaleHeight);
+        
         mat = rotate(mat, rotation);
 
         mat = offset(mat, offsetX, offsetY);
+        
+        mat = deinterlace(mat);
 
         if (flipX || flipY) {
             int flipCode;
@@ -235,8 +350,21 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
         }
         return mat;
     }
+    
+    private Mat deinterlace(Mat mat) {
+        if (!deinterlace) {
+            return mat;
+        }
+        Mat dst = new Mat(mat.size(), mat.type());
+        for (int i = 0; i < mat.rows() / 2; i++) {
+            mat.row(i).copyTo(dst.row(i * 2));
+            mat.row(i + mat.rows() / 2).copyTo(dst.row(i * 2 + 1));
+        }
+        mat.release();
+        return dst;
+    }
 
-    private Mat rotate(Mat mat, double rotation) {
+    private static Mat rotate(Mat mat, double rotation) {
         if (rotation == 0D) {
             return mat;
         }
@@ -265,7 +393,7 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
         return dst;
     }
 
-    private Mat offset(Mat mat, int offsetX, int offsetY) {
+    private static Mat offset(Mat mat, int offsetX, int offsetY) {
         if (offsetX == 0D && offsetY == 0D) {
             return mat;
         }
@@ -283,6 +411,16 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
 
         mapMatrix.release();
 
+        return dst;
+    }
+    
+    private static Mat scale(Mat mat, int scaleWidth, int scaleHeight) {
+        if (scaleWidth == 0 || scaleHeight == 0) {
+            return mat;
+        }
+        Mat dst = new Mat();
+        Imgproc.resize(mat, dst, new Size(scaleWidth, scaleHeight));
+        mat.release();
         return dst;
     }
 
@@ -314,16 +452,19 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
             return mat;
         }
 
+        // Get the number of images counted so far.
         int count = lensCalibration.getPatternFoundCount();
 
+        // Submit an image for counting. If it is good the count will increase.
         Mat appliedMat = lensCalibration.apply(mat);
         if (appliedMat == null) {
             // nothing was found in the image
             return mat;
         }
 
+        // If the count changed then we have counted a new image, so let the caller know.
         if (count != lensCalibration.getPatternFoundCount()) {
-            // a new image was counted, so let the caller know
+            // If we've reached our goal, finish the process.
             if (lensCalibration.getPatternFoundCount() == calibrationCountGoal) {
                 calibrationCallback.callback(lensCalibration.getPatternFoundCount(),
                         calibrationCountGoal, true);
@@ -331,12 +472,22 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
                 calibration.setCameraMatrixMat(lensCalibration.getCameraMatrix());
                 calibration
                         .setDistortionCoefficientsMat(lensCalibration.getDistortionCoefficients());
+                // Clear the calibration cache
+                if (undistortionMap1 != null) {
+                    undistortionMap1.release();
+                    undistortionMap1 = null;
+                }
+                if (undistortionMap2 != null) {
+                    undistortionMap2.release();
+                    undistortionMap2 = null;
+                }
                 calibration.setEnabled(true);
 
                 lensCalibration.close();
                 lensCalibration = null;
                 calibrating = false;
             }
+            // Otherwise just report the addition.
             else {
                 calibrationCallback.callback(lensCalibration.getPatternFoundCount(),
                         calibrationCountGoal, false);
@@ -372,7 +523,7 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
         if (getHead() == null) {
             return getHeadOffsets();
         }
-        return driver.getLocation(this);
+        return getDriver().getLocation(this);
     }
 
     public Length getSafeZ() {
@@ -386,11 +537,56 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
     @Override
     public void close() throws IOException {}
 
+    @Override
+    public PropertySheet[] getPropertySheets() {
+        return new PropertySheet[] {
+                new PropertySheetWizardAdapter(new CameraConfigurationWizard(this), "General Configuration"),
+                new PropertySheetWizardAdapter(getConfigurationWizard(), "Camera Specific"),
+                new PropertySheetWizardAdapter(visionProvider.getConfigurationWizard(), "Vision Provider")};
+    }
+    
+    @Override
+    public Action[] getPropertySheetHolderActions() {
+        return new Action[] { deleteAction };
+    }
+    
+    public Action deleteAction = new AbstractAction("Delete Camera") {
+        {
+            putValue(SMALL_ICON, Icons.delete);
+            putValue(NAME, "Delete Camera");
+            putValue(SHORT_DESCRIPTION, "Delete the currently selected camera.");
+        }
+
+        @Override
+        public void actionPerformed(ActionEvent arg0) {
+            int ret = JOptionPane.showConfirmDialog(MainFrame.get(),
+                    "Are you sure you want to delete " + getName() + "?",
+                    "Delete " + getName() + "?", JOptionPane.YES_NO_OPTION);
+            if (ret == JOptionPane.YES_OPTION) {
+                if (getHead() != null) {
+                    getHead().removeCamera(ReferenceCamera.this);
+                }
+                else {
+                    Configuration.get().getMachine().removeCamera(ReferenceCamera.this);
+                }
+                MainFrame.get().getCameraViews().removeCamera(ReferenceCamera.this);
+            }
+        }
+    };
+    
+    ReferenceDriver getDriver() {
+        return getMachine().getDriver();
+    }
+    
+    ReferenceMachine getMachine() {
+        return (ReferenceMachine) Configuration.get().getMachine();
+    }
+
     public interface CalibrationCallback {
         public void callback(int progressCurrent, int progressMax, boolean complete);
     }
 
-    public static class LensCalibrationParams {
+    public static class LensCalibrationParams extends AbstractModelObject {
         @Attribute(required = false)
         private boolean enabled = false;
 
@@ -420,7 +616,9 @@ public abstract class ReferenceCamera extends AbstractCamera implements Referenc
         }
 
         public void setEnabled(boolean enabled) {
+            Object oldValue = this.isEnabled();
             this.enabled = enabled;
+            firePropertyChange("enabled", oldValue, enabled);
         }
 
         public Mat getCameraMatrixMat() {

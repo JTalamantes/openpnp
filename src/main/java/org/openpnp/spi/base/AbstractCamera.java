@@ -3,7 +3,9 @@ package org.openpnp.spi.base;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 import javax.swing.Icon;
@@ -11,16 +13,18 @@ import javax.swing.Icon;
 import org.openpnp.CameraListener;
 import org.openpnp.ConfigurationListener;
 import org.openpnp.gui.support.Icons;
+import org.openpnp.model.AbstractModelObject;
 import org.openpnp.model.Configuration;
 import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
 import org.openpnp.spi.Camera;
 import org.openpnp.spi.Head;
 import org.openpnp.spi.VisionProvider;
+import org.pmw.tinylog.Logger;
 import org.simpleframework.xml.Attribute;
 import org.simpleframework.xml.Element;
 
-public abstract class AbstractCamera implements Camera {
+public abstract class AbstractCamera extends AbstractModelObject implements Camera {
     @Attribute
     protected String id;
 
@@ -46,9 +50,11 @@ public abstract class AbstractCamera implements Camera {
     protected Integer width;
 
     protected Integer height;
+    
+    private boolean headSet = false;
 
     public AbstractCamera() {
-        this.id = Configuration.createId();
+        this.id = Configuration.createId("CAM");
         this.name = getClass().getSimpleName();
         Configuration.get().addListener(new ConfigurationListener.Adapter() {
             @Override
@@ -73,6 +79,7 @@ public abstract class AbstractCamera implements Camera {
     @Override
     public void setName(String name) {
         this.name = name;
+        firePropertyChange("name", null, name);
     }
 
     @Override
@@ -82,7 +89,11 @@ public abstract class AbstractCamera implements Camera {
 
     @Override
     public void setHead(Head head) {
+        if (this.headSet) {
+            throw new Error("Can't change head on camera " + this);
+        }
         this.head = head;
+        this.headSet = true;
     }
 
     @Override
@@ -98,6 +109,7 @@ public abstract class AbstractCamera implements Camera {
     @Override
     public void setLooking(Looking looking) {
         this.looking = looking;
+        firePropertyChange("looking", null, looking);
     }
 
     @Override
@@ -127,6 +139,17 @@ public abstract class AbstractCamera implements Camera {
     }
 
     public BufferedImage settleAndCapture() {
+
+        try {
+            Map<String, Object> globals = new HashMap<>();
+            globals.put("camera", this);
+            Configuration.get().getScripting().on("Camera.BeforeSettle", globals);
+        }
+        catch (Exception e) {
+            Logger.warn(e);
+        }
+        
+    	
         try {
             Thread.sleep(getSettleTimeMs());
         }
@@ -144,26 +167,6 @@ public abstract class AbstractCamera implements Camera {
                 listener.lastFrameSent = System.currentTimeMillis();
             }
         }
-    }
-
-    @Override
-    public int getWidth() {
-        if (width == null) {
-            BufferedImage image = capture();
-            width = image.getWidth();
-            height = image.getHeight();
-        }
-        return width;
-    }
-
-    @Override
-    public int getHeight() {
-        if (width == null) {
-            BufferedImage image = capture();
-            width = image.getWidth();
-            height = image.getHeight();
-        }
-        return height;
     }
 
     public long getSettleTimeMs() {
@@ -187,6 +190,11 @@ public abstract class AbstractCamera implements Camera {
     @Override
     public void moveToSafeZ() throws Exception {
         moveToSafeZ(getHead().getMachine().getSpeed());
+    }
+    
+    @Override
+    public String toString() {
+        return getName();
     }
     
     protected class ListenerEntry {

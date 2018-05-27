@@ -39,9 +39,8 @@ import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
 import org.openpnp.spi.Head;
 import org.openpnp.spi.PropertySheetHolder;
+import org.pmw.tinylog.Logger;
 import org.simpleframework.xml.Attribute;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * An example of the simplest possible driver that can support multiple heads. This driver maintains
@@ -49,7 +48,7 @@ import org.slf4j.LoggerFactory;
  * to it.
  */
 public class NullDriver implements ReferenceDriver {
-    private final static Logger logger = LoggerFactory.getLogger(NullDriver.class);
+
 
     @Attribute(required = false)
     private double feedRateMmPerMinute = 5000;
@@ -80,7 +79,7 @@ public class NullDriver implements ReferenceDriver {
 
     @Override
     public void home(ReferenceHead head) throws Exception {
-        logger.debug("home()");
+        Logger.debug("home()");
         checkEnabled();
         setHeadLocation(head, getHeadLocation(head).derive(0.0, 0.0, 0.0, 0.0));
     }
@@ -103,7 +102,7 @@ public class NullDriver implements ReferenceDriver {
     @Override
     public void moveTo(ReferenceHeadMountable hm, Location location, double speed)
             throws Exception {
-        logger.debug("moveTo({}, {}, {})", hm, location, speed);
+        Logger.debug("moveTo({}, {}, {})", hm, location, speed);
         checkEnabled();
 
         // Subtract the offsets from the incoming Location. This converts the
@@ -224,7 +223,7 @@ public class NullDriver implements ReferenceDriver {
 
     @Override
     public void pick(ReferenceNozzle nozzle) throws Exception {
-        logger.debug("pick({})", nozzle);
+        Logger.debug("pick({})", nozzle);
         checkEnabled();
         if (feedRateMmPerMinute > 0) {
             Thread.sleep(500);
@@ -233,7 +232,7 @@ public class NullDriver implements ReferenceDriver {
 
     @Override
     public void place(ReferenceNozzle nozzle) throws Exception {
-        logger.debug("place({})", nozzle);
+        Logger.debug("place({})", nozzle);
         checkEnabled();
         if (feedRateMmPerMinute > 0) {
             Thread.sleep(500);
@@ -242,7 +241,7 @@ public class NullDriver implements ReferenceDriver {
 
     @Override
     public void actuate(ReferenceActuator actuator, double value) throws Exception {
-        logger.debug("actuate({}, {})", actuator, value);
+        Logger.debug("actuate({}, {})", actuator, value);
         checkEnabled();
         if (feedRateMmPerMinute > 0) {
             Thread.sleep(500);
@@ -251,17 +250,22 @@ public class NullDriver implements ReferenceDriver {
 
     @Override
     public void actuate(ReferenceActuator actuator, boolean on) throws Exception {
-        logger.debug("actuate({}, {})", actuator, on);
+        Logger.debug("actuate({}, {})", actuator, on);
         checkEnabled();
         if (feedRateMmPerMinute > 0) {
             Thread.sleep(500);
         }
     }
+    
+    @Override
+    public String actuatorRead(ReferenceActuator actuator) throws Exception {
+        return Math.random() + "";
+    }
 
     @Override
     public void dispense(ReferencePasteDispenser dispenser, Location startLocation,
             Location endLocation, long dispenseTimeMilliseconds) throws Exception {
-        logger.debug("dispense({}, {}, {}, {})",
+        Logger.debug("dispense({}, {}, {}, {})",
                 new Object[] {dispenser, startLocation, endLocation, dispenseTimeMilliseconds});
         checkEnabled();
         Thread.sleep(dispenseTimeMilliseconds);
@@ -269,13 +273,12 @@ public class NullDriver implements ReferenceDriver {
 
     @Override
     public void setEnabled(boolean enabled) throws Exception {
-        logger.debug("setEnabled({})", enabled);
+        Logger.debug("setEnabled({})", enabled);
         this.enabled = enabled;
     }
 
     @Override
     public Wizard getConfigurationWizard() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -286,7 +289,6 @@ public class NullDriver implements ReferenceDriver {
 
     @Override
     public PropertySheetHolder[] getChildPropertySheetHolders() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -297,13 +299,11 @@ public class NullDriver implements ReferenceDriver {
 
     @Override
     public Icon getPropertySheetHolderIcon() {
-        // TODO Auto-generated method stub
         return null;
     }
 
     @Override
     public Action[] getPropertySheetHolderActions() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -323,7 +323,6 @@ public class NullDriver implements ReferenceDriver {
 
     @Override
     public void close() throws IOException {
-        // TODO Auto-generated method stub
 
     }
 }

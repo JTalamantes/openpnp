@@ -28,13 +28,14 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 import java.util.prefs.Preferences;
 
 import org.apache.commons.io.FileUtils;
 import org.openpnp.ConfigurationListener;
+import org.openpnp.Scripting;
 import org.openpnp.spi.Machine;
 import org.openpnp.util.ResourceUtils;
+import org.pmw.tinylog.Logger;
 import org.simpleframework.xml.Element;
 import org.simpleframework.xml.ElementList;
 import org.simpleframework.xml.Root;
@@ -44,12 +45,10 @@ import org.simpleframework.xml.core.Persister;
 import org.simpleframework.xml.stream.Format;
 import org.simpleframework.xml.stream.HyphenStyle;
 import org.simpleframework.xml.stream.Style;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+
+import com.google.common.eventbus.EventBus;
 
 public class Configuration extends AbstractModelObject {
-    private static final Logger logger = LoggerFactory.getLogger(Configuration.class);
-
     private static Configuration instance;
 
     private static final String PREF_UNITS = "Configuration.units";
@@ -65,6 +64,7 @@ public class Configuration extends AbstractModelObject {
     private static final String PREF_VERTICAL_SCROLL_UNIT_INCREMENT =
             "Configuration.verticalScrollUnitIncrement";
     private static final int PREF_VERTICAL_SCROLL_UNIT_INCREMENT_DEF = 16;
+    private static final String imgurClientId = "620fc1fa8ee0180";
 
     private LinkedHashMap<String, Package> packages = new LinkedHashMap<>();
     private LinkedHashMap<String, Part> parts = new LinkedHashMap<>();
@@ -74,6 +74,8 @@ public class Configuration extends AbstractModelObject {
     private Set<ConfigurationListener> listeners = Collections.synchronizedSet(new HashSet<>());
     private File configurationDirectory;
     private Preferences prefs;
+    private Scripting scripting;
+    private EventBus bus = new EventBus();
 
     public static Configuration get() {
         if (instance == null) {
@@ -90,6 +92,14 @@ public class Configuration extends AbstractModelObject {
     private Configuration(File configurationDirectory) {
         this.configurationDirectory = configurationDirectory;
         this.prefs = Preferences.userNodeForPackage(Configuration.class);
+    }
+    
+    public Scripting getScripting() {
+        return scripting;
+    }
+    
+    public EventBus getBus() {
+        return bus;
     }
 
     public File getConfigurationDirectory() {
@@ -206,7 +216,7 @@ public class Configuration extends AbstractModelObject {
         try {
             File file = new File(configurationDirectory, "packages.xml");
             if (overrideUserConfig || !file.exists()) {
-                logger.info("No packages.xml found in configuration directory, loading defaults.");
+                Logger.info("No packages.xml found in configuration directory, loading defaults.");
                 file = File.createTempFile("packages", "xml");
                 FileUtils.copyURLToFile(ClassLoader.getSystemResource("config/packages.xml"), file);
                 forceSave = true;
@@ -225,7 +235,7 @@ public class Configuration extends AbstractModelObject {
         try {
             File file = new File(configurationDirectory, "parts.xml");
             if (overrideUserConfig || !file.exists()) {
-                logger.info("No parts.xml found in configuration directory, loading defaults.");
+                Logger.info("No parts.xml found in configuration directory, loading defaults.");
                 file = File.createTempFile("parts", "xml");
                 FileUtils.copyURLToFile(ClassLoader.getSystemResource("config/parts.xml"), file);
                 forceSave = true;
@@ -244,7 +254,7 @@ public class Configuration extends AbstractModelObject {
         try {
             File file = new File(configurationDirectory, "machine.xml");
             if (overrideUserConfig || !file.exists()) {
-                logger.info("No machine.xml found in configuration directory, loading defaults.");
+                Logger.info("No machine.xml found in configuration directory, loading defaults.");
                 file = File.createTempFile("machine", "xml");
                 FileUtils.copyURLToFile(ClassLoader.getSystemResource("config/machine.xml"), file);
                 forceSave = true;
@@ -266,7 +276,7 @@ public class Configuration extends AbstractModelObject {
         }
 
         if (forceSave) {
-            logger.info("Defaults were loaded. Saving to configuration directory.");
+            Logger.info("Defaults were loaded. Saving to configuration directory.");
             configurationDirectory.mkdirs();
             save();
         }
@@ -274,6 +284,8 @@ public class Configuration extends AbstractModelObject {
         for (ConfigurationListener listener : listeners) {
             listener.configurationComplete(this);
         }
+        
+        scripting = new Scripting();
     }
 
     public synchronized void save() throws Exception {
@@ -473,6 +485,10 @@ public class Configuration extends AbstractModelObject {
         job.setFile(file);
         job.setDirty(false);
     }
+    
+    public String getImgurClientId() {
+        return imgurClientId;
+    }
 
     public void saveBoard(Board board) throws Exception {
         Serializer serializer = createSerializer();
@@ -497,8 +513,8 @@ public class Configuration extends AbstractModelObject {
         return serializer;
     }
 
-    public static String createId() {
-        return UUID.randomUUID().toString();
+    public static String createId(String prefix) {
+        return prefix + System.currentTimeMillis();
     }
 
     /**

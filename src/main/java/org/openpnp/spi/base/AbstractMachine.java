@@ -1,6 +1,7 @@
 package org.openpnp.spi.base;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -13,30 +14,27 @@ import java.util.concurrent.TimeUnit;
 
 import javax.swing.Icon;
 
-import org.openpnp.machine.reference.ReferencePnpJobProcessor;
-import org.openpnp.machine.reference.vision.ReferenceBottomVision;
-import org.openpnp.machine.reference.vision.ReferenceFiducialLocator;
+import org.openpnp.model.AbstractModelObject;
 import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
 import org.openpnp.spi.Actuator;
 import org.openpnp.spi.Camera;
 import org.openpnp.spi.Feeder;
-import org.openpnp.spi.FiducialLocator;
 import org.openpnp.spi.Head;
 import org.openpnp.spi.Machine;
 import org.openpnp.spi.MachineListener;
+import org.openpnp.spi.Signaler;
 import org.openpnp.spi.PartAlignment;
-import org.openpnp.spi.PasteDispenseJobProcessor;
-import org.openpnp.spi.PnpJobProcessor;
 import org.openpnp.util.IdentifiableList;
 import org.simpleframework.xml.Attribute;
 import org.simpleframework.xml.Element;
 import org.simpleframework.xml.ElementList;
+import org.simpleframework.xml.ElementMap;
 import org.simpleframework.xml.core.Commit;
 
 import com.google.common.util.concurrent.FutureCallback;
 
-public abstract class AbstractMachine implements Machine {
+public abstract class AbstractMachine extends AbstractModelObject implements Machine {
     /**
      * History:
      * 
@@ -47,8 +45,15 @@ public abstract class AbstractMachine implements Machine {
      * JobPlanner.
      */
 
+    public enum State {
+        ERROR
+    }
+
     @ElementList
     protected IdentifiableList<Head> heads = new IdentifiableList<>();
+
+    @ElementList(required = false)
+    protected IdentifiableList<Signaler> signalers = new IdentifiableList<>();
 
     @ElementList(required = false)
     protected IdentifiableList<Feeder> feeders = new IdentifiableList<>();
@@ -59,11 +64,17 @@ public abstract class AbstractMachine implements Machine {
     @ElementList(required = false)
     protected IdentifiableList<Actuator> actuators = new IdentifiableList<>();
 
+    @ElementList(required = false)
+    protected IdentifiableList<PartAlignment> partAlignments = new IdentifiableList<>();
+
     @Element(required = false)
     protected Location discardLocation = new Location(LengthUnit.Millimeters);
 
     @Attribute(required = false)
     protected double speed = 1.0D;
+    
+    @ElementMap(required = false)
+    protected HashMap<String, Object> properties = new HashMap<>();
 
     protected Set<MachineListener> listeners = Collections.synchronizedSet(new HashSet<>());
 
@@ -73,7 +84,7 @@ public abstract class AbstractMachine implements Machine {
 
     @SuppressWarnings("unused")
     @Commit
-    private void commit() {
+    protected void commit() {
         for (Head head : heads) {
             head.setMachine(this);
         }
@@ -87,6 +98,26 @@ public abstract class AbstractMachine implements Machine {
     @Override
     public Head getHead(String id) {
         return heads.get(id);
+    }
+
+    @Override
+    public List<Signaler> getSignalers() {
+        return Collections.unmodifiableList(signalers);
+    }
+
+    @Override
+    public Signaler getSignaler(String id) {
+        return signalers.get(id);
+    }
+
+    @Override
+    public Signaler getSignalerByName(String name) {
+        for (Signaler signaler : signalers) {
+            if (signaler.getName().equals(name)) {
+                return signaler;
+            }
+        }
+        return null;
     }
 
     @Override
@@ -107,6 +138,11 @@ public abstract class AbstractMachine implements Machine {
     @Override
     public Camera getCamera(String id) {
         return cameras.get(id);
+    }
+
+    @Override
+    public List<PartAlignment> getPartAlignments() {
+        return Collections.unmodifiableList(partAlignments);
     }
 
     @Override
@@ -159,24 +195,46 @@ public abstract class AbstractMachine implements Machine {
     @Override
     public void addFeeder(Feeder feeder) throws Exception {
         feeders.add(feeder);
+        fireIndexedPropertyChange("feeders", feeders.size() - 1, null, feeder);
     }
 
     @Override
     public void removeFeeder(Feeder feeder) {
-        feeders.remove(feeder);
+        int index = feeders.indexOf(feeder);
+        if (feeders.remove(feeder)) {
+            fireIndexedPropertyChange("feeders", index, feeder, null);
+        }
     }
 
     @Override
     public void addCamera(Camera camera) throws Exception {
+        camera.setHead(null);
         cameras.add(camera);
+        fireIndexedPropertyChange("cameras", cameras.size() - 1, null, camera);
     }
 
     @Override
     public void removeCamera(Camera camera) {
-        cameras.remove(camera);
+        int index = cameras.indexOf(camera);
+        if (cameras.remove(camera)) {
+            fireIndexedPropertyChange("cameras", index, camera, null);
+        }
+    }
+    
+    @Override
+    public void addActuator(Actuator actuator) throws Exception {
+        actuator.setHead(null);
+        actuators.add(actuator);
+        fireIndexedPropertyChange("actuators", actuators.size() - 1, null, actuator);
     }
 
-
+    @Override
+    public void removeActuator(Actuator actuator) {
+        int index = actuators.indexOf(actuator);
+        if (actuators.remove(actuator)) {
+            fireIndexedPropertyChange("actuators", index, actuator, null);
+        }
+    }
 
     public void fireMachineHeadActivity(Head head) {
         for (MachineListener listener : listeners) {
@@ -216,7 +274,6 @@ public abstract class AbstractMachine implements Machine {
 
     @Override
     public Icon getPropertySheetHolderIcon() {
-        // TODO Auto-generated method stub
         return null;
     }
 
@@ -325,5 +382,15 @@ public abstract class AbstractMachine implements Machine {
     @Override
     public double getSpeed() {
         return speed;
+    }
+
+    @Override
+    public Object getProperty(String name) {
+        return properties.get(name);
+    }
+
+    @Override
+    public void setProperty(String name, Object value) {
+        properties.put(name, value);
     }
 }

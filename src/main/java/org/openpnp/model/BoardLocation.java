@@ -19,14 +19,20 @@
 
 package org.openpnp.model;
 
+import java.util.HashMap;
+import java.util.Map;
 import org.openpnp.model.Board.Side;
 import org.simpleframework.xml.Attribute;
 import org.simpleframework.xml.Element;
+import org.simpleframework.xml.ElementMap;
 import org.simpleframework.xml.core.Commit;
 
 public class BoardLocation extends AbstractModelObject {
     @Element
     private Location location;
+    
+    private Location locationFiducialOverrides;
+    
     @Attribute
     private Side side = Side.Top;
     private Board board;
@@ -35,13 +41,33 @@ public class BoardLocation extends AbstractModelObject {
     private String boardFile;
 
     @Attribute(required = false)
+    private String panelId = new String("Panel1"); // UI doesn't have a way to specify multiple
+                                                    // panels at this point
+
+    @Attribute(required = false)
     private boolean checkFiducials;
 
     @Attribute(required = false)
     private boolean enabled = true;
 
+    @ElementMap(required = false)
+    private Map<String, Boolean> placed = new HashMap<String, Boolean>();
+
     BoardLocation() {
         setLocation(new Location(LengthUnit.Millimeters));
+    }
+
+    // Copy constructor needed for deep copy of object.
+    public BoardLocation(BoardLocation obj) {
+        this.location = obj.location;
+        this.locationFiducialOverrides = obj.locationFiducialOverrides;
+        this.side = obj.side;
+        this.board = obj.board;
+        this.boardFile = obj.boardFile;
+        this.panelId = obj.panelId;
+        this.checkFiducials = obj.checkFiducials;
+        this.enabled = obj.enabled;
+        this.placed = obj.placed;
     }
 
     public BoardLocation(Board board) {
@@ -64,6 +90,30 @@ public class BoardLocation extends AbstractModelObject {
         Location oldValue = this.location;
         this.location = location;
         firePropertyChange("location", oldValue, location);
+    }
+    
+    public Location getLocationFiducialOverrides() {
+        return locationFiducialOverrides;
+    }
+
+    public void setLocationFiducialOverrides(Location locationFiducialOverrides) {
+        Location oldValue = this.locationFiducialOverrides;
+        this.locationFiducialOverrides = locationFiducialOverrides;
+        firePropertyChange("locationFiducialOverrides", oldValue, locationFiducialOverrides);
+    }
+
+    public void clearLocationFiducialOverrides() {
+        setLocationFiducialOverrides(null);
+    }
+
+    public Location getFiducialCompensatedBoardLocation() {
+        // Check if there is a fiducial override for the board location and if so, use it.
+        if ( locationFiducialOverrides != null ) {
+            return locationFiducialOverrides;
+        } else {
+            return location;            
+        }
+        
     }
 
     public Side getSide() {
@@ -94,6 +144,16 @@ public class BoardLocation extends AbstractModelObject {
         this.boardFile = boardFile;
     }
 
+    public String getPanelId() {
+        return panelId;
+    }
+
+    public void setPanelId(String id) {
+        String oldValue = this.panelId;
+        this.panelId = id;
+        firePropertyChange("panelId", oldValue, panelId);
+    }
+
     public boolean isCheckFiducials() {
         return checkFiducials;
     }
@@ -112,6 +172,25 @@ public class BoardLocation extends AbstractModelObject {
         boolean oldValue = this.enabled;
         this.enabled = enabled;
         firePropertyChange("enabled", oldValue, enabled);
+    }
+
+    public void setPlaced(String placementId, boolean placed) {
+        this.placed.put(placementId, placed);
+        firePropertyChange("placed", null, this.placed);
+    }
+
+    public boolean getPlaced(String placementId) {
+        if (placed.containsKey(placementId)) {
+            return placed.get(placementId);
+        } 
+        else {
+            return false;
+        }
+    }
+    
+    public void clearAllPlaced() {
+        this.placed.clear();
+        firePropertyChange("placed", null, this.placed);
     }
 
     @Override
