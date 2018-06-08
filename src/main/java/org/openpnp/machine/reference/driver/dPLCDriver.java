@@ -10,7 +10,6 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.LinkedBlockingQueue;
 
 import javax.swing.AbstractAction;
 import javax.swing.Action;
@@ -53,25 +52,13 @@ import com.ghgande.j2mod.modbus.ModbusException;
 public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable {
 
 	@Attribute(required = false)
-	private short speedFactor = 100;
-
-	@Attribute(required = false)
 	protected LengthUnit units = LengthUnit.Millimeters;
 
 	@Attribute(required = false)
 	protected int maxFeedRate = 1000;
 
 	@Attribute(required = false)
-	protected double backlashOffsetX = -1;
-
-	@Attribute(required = false)
-	protected double backlashOffsetY = -1;
-
-	@Attribute(required = false)
 	protected double nonSquarenessFactor = 0;
-
-	@Attribute(required = false)
-	protected double backlashFeedRateFactor = 0.1;
 
 	@Attribute(required = false)
 	protected int moveTimeoutMilliseconds = 5000;
@@ -80,7 +67,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 	protected int connectWaitTimeMilliseconds = 3000;
 
 	@Attribute(required = false)
-	protected boolean visualHomingEnabled = true;
+	protected boolean visualHomingEnabled = false;
 
 	@Element(required = false)
 	protected Location homingFiducialLocation = new Location(LengthUnit.Millimeters);
@@ -94,18 +81,17 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 	@Attribute(required = false)
 	protected String name = "dPLCDriver";
 
-	@Attribute(required = false)
-	private String pumpAxisID = "x";
-
 	boolean connected;
 	private boolean disconnectRequested;
 	private Thread readerThread;
-	private LinkedBlockingQueue<String> responseQueue = new LinkedBlockingQueue<>();
 	private Set<Nozzle> pickedNozzles = new HashSet<>();
 	private dPLCDriver parent = null;
 
 	@Commit
 	public void commit() {
+		for (Axis axis : axes) {
+			axis.master = this;
+		}
 		for (dPLCDriver driver : subDrivers) {
 			driver.parent = this;
 		}
@@ -117,10 +103,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		axes.add(new Axis("x", 1, Axis.Type.X, 0, this, "*"));
 		axes.add(new Axis("y", 2, Axis.Type.Y, 0, this, "*"));
 		axes.add(new Axis("z", 3, Axis.Type.Z, 0, this, "*"));
-		axes.add(new Axis("Z 1", 4, Axis.Type.Z_Theta, 0, this, "*"));
-		axes.add(new Axis("rotation 1", 5, Axis.Type.Rotation, 0, this, "*"));
-		axes.add(new Axis("Z 2", 6, Axis.Type.Z_Theta, 0, this, "*"));
-		axes.add(new Axis("rotation 2", 7, Axis.Type.Rotation, 0, this, "*"));
+		axes.add(new Axis("rotation", 4, Axis.Type.Rotation, 0, this, "*"));
 	}
 
 	public synchronized void connect() throws Exception {
@@ -213,6 +196,9 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 			}
 		}
 
+		//TODO: Wait until the controller is inHome position
+
+
 		// Compensate non-squareness factor:
 		// We are homing to the native controller's non-square coordinate system, this
 		// does not
@@ -248,8 +234,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 		// Write Home Position and wait for command to be done
 		for (Axis axis : axes) {
-			while (!axis.isInHome())
-				;
+			while (!axis.isInHome());
 		}
 
 		for (ReferenceDriver driver : subDrivers) {
@@ -364,15 +349,15 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 			rotationAxis = null;
 		}
 
-		// Check if the commanded position isn't negative
+		// Check that the commanded position isn't negative
 		if (x < 0) {
-			x = 0;
+			throw new Exception("X Axis position can't be negative");
 		}
 		if (y < 0) {
-			y = 0;
+			throw new Exception("Y Axis position can't be negative");
 		}
 		if (z < 0) {
-			z = 0;
+			throw new Exception("Z Axis position can't be negative");
 		}
 
 		// If no axes are included in the move, there's nothing to do, so just return.
@@ -382,15 +367,15 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 		if (xAxis != null || yAxis != null || zAxis != null || rotationAxis != null) {
 			// //Verify that the position isn't bigger than the length of the actuator
-			// if (xAxis != null && xAxis.getLength() != 0 && x > xAxis.getLength()) {
-			// x = xAxis.getLength();
-			// }
-			// if (yAxis != null && yAxis.getLength() != 0 && y > yAxis.getLength()) {
-			// y = yAxis.getLength();
-			// }
-			// if (zAxis != null && zAxis.getLength() != 0 && z > zAxis.getLength()) {
-			// z = zAxis.getLength();
-			// }
+			 if (xAxis != null && xAxis.getLength() != 0 && x > xAxis.getLength()) {
+				 throw new Exception("X Axis position out of length");
+			 }
+			 if (yAxis != null && yAxis.getLength() != 0 && y > yAxis.getLength()) {
+				 throw new Exception("Y Axis position out of length");
+			 }
+			 if (zAxis != null && zAxis.getLength() != 0 && z > zAxis.getLength()) {
+				 throw new Exception("Z Axis position out of length");
+			 }
 
 			// For each included axis, if the axis has a transform, transform the target
 			// coordinate
@@ -408,10 +393,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 				rotation = rotationAxis.getTransform().toRaw(rotationAxis, hm, rotation);
 			}
 
-			/**
-			 * NSF gets applied to X and is multiplied by Y
-			 * 
-			 */
+			//nonSquarenessFactor gets applied to X and is multiplied by Y
 
 			boolean includeX = false, includeY = false, includeZ = false, includeRotation = false;
 
@@ -438,24 +420,24 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 			// Only give a command when move is necessary
 			if (includeX || includeY || includeZ || includeRotation) {
-				// //Set speed factor
-				// this.holdings[1].setValue((short)(speed * 100));
-
+				//Set speed factor
+				float speedValue;
+				speedValue = ((maxFeedRate * 100)  / maxFeedRate);
 				// Send the position to move
 				if (xAxis != null) {
-					xAxis.setSpeed(speed);
+					xAxis.setSpeed(speedValue);
 					xAxis.setCoordinate(x);
 				}
 				if (yAxis != null) {
-					yAxis.setSpeed(speed);
+					yAxis.setSpeed(speedValue);
 					yAxis.setCoordinate(y);
 				}
 				if (zAxis != null) {
-					zAxis.setSpeed(speed);
+					zAxis.setSpeed(speedValue);
 					zAxis.setCoordinate(z);
 				}
 				if (rotationAxis != null) {
-					rotationAxis.setSpeed(speed);
+					rotationAxis.setSpeed(speedValue);
 					rotationAxis.setCoordinate(rotation);
 				}
 
@@ -500,12 +482,9 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 	@Override
 	public void pick(ReferenceNozzle nozzle) throws Exception {
-		pickedNozzles.add(nozzle);
-		if (pickedNozzles.size() > 0) {
-			// Turn on Pump
-			Axis ztheta = getAxis(nozzle, Axis.Type.Z);
-			ztheta.setOutput(ztheta.pumpOutput, true);
-		}
+		// Turn on Pump
+		Axis ztheta = getAxis(nozzle, Axis.Type.Z);
+		ztheta.setOutput(ztheta.pumpOutput, true);
 
 		// Vacuum limits
 		// ReferenceNozzleTip nt = nozzle.getNozzleTip();
@@ -521,14 +500,6 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 	@Override
 	public void place(ReferenceNozzle nozzle) throws Exception {
-		// Turn off pump
-		for (Axis axis : axes) {
-			if (axis.getName().equals(this.pumpAxisID)) {
-				axis.setOutput(axis.pumpOutput, false);
-				break;
-			}
-		}
-
 		// Vacuum limits
 		// ReferenceNozzleTip nt = nozzle.getNozzleTip();
 		// command = substituteVariable(command, "VacuumLevelPartOn",
@@ -536,12 +507,9 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		// command = substituteVariable(command, "VacuumLevelPartOff",
 		// nt.getVacuumLevelPartOff());
 
-		pickedNozzles.remove(nozzle);
-		if (pickedNozzles.size() < 1) {
-			// Turn off specific head solenoid
-			Axis ztheta = getAxis(nozzle, Axis.Type.Z);
-			ztheta.setOutput(ztheta.pumpOutput, false);
-		}
+		// Turn off specific head solenoid
+		Axis ztheta = getAxis(nozzle, Axis.Type.Z);
+		ztheta.setOutput(ztheta.pumpOutput, false);
 
 		for (ReferenceDriver driver : subDrivers) {
 			driver.place(nozzle);
@@ -768,30 +736,6 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		this.units = units;
 	}
 
-	public double getBacklashOffsetX() {
-		return backlashOffsetX;
-	}
-
-	public void setBacklashOffsetX(double BacklashOffsetX) {
-		this.backlashOffsetX = BacklashOffsetX;
-	}
-
-	public double getBacklashOffsetY() {
-		return backlashOffsetY;
-	}
-
-	public void setBacklashOffsetY(double BacklashOffsetY) {
-		this.backlashOffsetY = BacklashOffsetY;
-	}
-
-	public double getBacklashFeedRateFactor() {
-		return backlashFeedRateFactor;
-	}
-
-	public void setBacklashFeedRateFactor(double BacklashFeedRateFactor) {
-		this.backlashFeedRateFactor = BacklashFeedRateFactor;
-	}
-
 	public void setNonSquarenessFactor(double NonSquarenessFactor) {
 		this.nonSquarenessFactor = NonSquarenessFactor;
 	}
@@ -843,19 +787,8 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 	protected static class Axis {
 		public enum Type {
-			X, Y, Z, Z_Theta, Rotation
-		};
-
-		public enum Parameters {
-			POSITION(0), SPEED(1), TOLERANCE(2), ACCELERATION(3), DEACCELERATION(4), TORQUE(5), OUTPUTS(6);
-
-			final int value;
-
-			private Parameters(int value) {
-				this.value = value;
-			}
-
-		};
+			X, Y, Z, Rotation
+		}
 
 		@Attribute
 		private String name;
@@ -891,7 +824,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		private byte acceleration = 20; // % of max
 
 		@Attribute(required = false)
-		private byte deacceleration = 20; // % of max
+		private byte deceleration = 20; // % of max
 
 		@Attribute(required = false)
 		private byte torque = 0;
@@ -953,9 +886,9 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 			this.type = type;
 		}
 
-		public double getCoordinate() {
+		public float getCoordinate() {
 			// Read coordinate from modbus
-			double readCoordinate = 0;
+			float readCoordinate = 0;
 			if (master != null && master.connected) {
 				// Read Input Reg
 				try {
@@ -1046,13 +979,13 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 			updateParameters();
 		}
 
-		public byte getDeacceleration() {
-			return deacceleration;
+		public byte getDeceleration() {
+			return deceleration;
 		}
 
-		public void setDeacceleration(byte deacceleration) {
-			if (deacceleration <= 255 && deacceleration >= 0) {
-				this.deacceleration = (byte) deacceleration;
+		public void setDeceleration(byte decceleration) {
+			if (decceleration <= 255 && decceleration >= 0) {
+				this.deceleration = (byte) decceleration;
 			}
 			updateParameters();
 		}
@@ -1069,7 +1002,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		}
 
 		public boolean getOutput(int output) {
-			if (output >= 0 && output < 4) {
+			if (output >= 0 && output < 2) {
 				return (this.output >> output) == 1;
 			}
 
@@ -1077,7 +1010,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		}
 
 		public void setOutput(int output, boolean state) {
-			if (output >= 0 && output < 4) {
+			if (output >= 0 && output < 2) {
 				if (state) { // turn on output
 					this.output |= (1 << output);
 				} else { // turn off output
@@ -1106,10 +1039,10 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 				// Update all parameters to modbus registers
 				offset = ((slotNum - 1) * 8);
 				master.setFloat((float) coordinate, DataType.HOLDINGS, 2 + offset);
-				master.setFloat((float) speed, DataType.HOLDINGS, 4 + offset);
-				master.setFloat((float) tolerance, DataType.HOLDINGS, 6 + offset);
+				master.setFloat(speed, DataType.HOLDINGS, 4 + offset);
+				master.setFloat(tolerance, DataType.HOLDINGS, 6 + offset);
 				master.setByte(acceleration, DataType.HOLDINGS, 8 + offset, ByteOrder.MSB);
-				master.setByte(deacceleration, DataType.HOLDINGS, 8 + offset, ByteOrder.LSB);
+				master.setByte(deceleration, DataType.HOLDINGS, 8 + offset, ByteOrder.LSB);
 				master.setByte(torque, DataType.HOLDINGS, 9 + offset, ByteOrder.MSB);
 				master.setByte(output, DataType.HOLDINGS, 9 + offset, ByteOrder.LSB);
 			}
@@ -1118,7 +1051,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		private boolean compareCoordinate(float coordinate) {
 			float diff;
 
-			diff = Math.abs(coordinate - (float) getCoordinate());
+			diff = Math.abs(coordinate - getCoordinate());
 
 			if (diff < this.tolerance) {
 				return true;
@@ -1175,41 +1108,6 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 			// Since we're just negating the value of the coordinate we can just
 			// use the same function.
 			return toTransformed(axis, hm, transformedCoordinate);
-		}
-	}
-
-	public static class CamTransform implements AxisTransform {
-		@Element
-		private String negatedHeadMountableId;
-
-		@Attribute(required = false)
-		private double camRadius = 24;
-
-		@Attribute(required = false)
-		private double camWheelRadius = 9.5;
-
-		@Attribute(required = false)
-		private double camWheelGap = 2;
-
-		@Override
-		public double toTransformed(Axis axis, HeadMountable hm, double rawCoordinate) {
-			double transformed = Math.sin(Math.toRadians(rawCoordinate)) * camRadius;
-			if (hm.getId().equals(negatedHeadMountableId)) {
-				transformed = -transformed;
-			}
-			transformed += camWheelRadius + camWheelGap;
-			return transformed;
-		}
-
-		@Override
-		public double toRaw(Axis axis, HeadMountable hm, double transformedCoordinate) {
-			double raw = (transformedCoordinate - camWheelRadius - camWheelGap) / camRadius;
-			raw = Math.min(Math.max(raw, -1), 1);
-			raw = Math.toDegrees(Math.asin(raw));
-			if (hm.getId().equals(negatedHeadMountableId)) {
-				raw = -raw;
-			}
-			return raw;
 		}
 	}
 }

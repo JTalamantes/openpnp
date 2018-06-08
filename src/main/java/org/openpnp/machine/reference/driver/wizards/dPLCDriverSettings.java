@@ -81,7 +81,7 @@ public class dPLCDriverSettings extends AbstractConfigurationWizard {
         unitsCb = new JComboBox(LengthUnit.values());
         settingsPanel.add(unitsCb, "8, 2, fill, default");
         
-        JLabel lblMaxFeedRate = new JLabel("Max Feed Rate [Units/Min]");
+        JLabel lblMaxFeedRate = new JLabel("Max Speed [Units/Seg]");
         settingsPanel.add(lblMaxFeedRate, "6, 4, right, default");
         
         maxFeedRateTf = new JTextField();
@@ -102,46 +102,46 @@ public class dPLCDriverSettings extends AbstractConfigurationWizard {
         settingsPanel.add(moveWaitTimeTf, "4, 4, fill, default");
         moveWaitTimeTf.setColumns(5);
         
-        JLabel lblBacklashOffsetX = new JLabel("Backlash Offset X [Units]");
-        settingsPanel.add(lblBacklashOffsetX, "2, 6, right, default");
-        
-        backlashOffsetXTf = new JTextField();
-        settingsPanel.add(backlashOffsetXTf, "4, 6, fill, default");
-        backlashOffsetXTf.setColumns(5);
-        
-        JLabel lblBacklashOffsetY = new JLabel("Backlash Offset Y [Units]");
-        settingsPanel.add(lblBacklashOffsetY, "6, 6, right, default");
-        
-        backlashOffsetYTf = new JTextField();
-        settingsPanel.add(backlashOffsetYTf, "8, 6, fill, default");
-        backlashOffsetYTf.setColumns(5);
-        
-        JLabel lblBacklashFeedSpeedFactor = new JLabel("Backlash Feed Rate Factor");
-        settingsPanel.add(lblBacklashFeedSpeedFactor, "2, 8, right, default");
-        
-        backlashFeedRateFactorTf = new JTextField();
-        settingsPanel.add(backlashFeedRateFactorTf, "4, 8, fill, default");
-        backlashFeedRateFactorTf.setColumns(5);
-        
-        JLabel lblNewLabel = new JLabel("Driver Name");
-        settingsPanel.add(lblNewLabel, "6, 8, right, default");
-        
-        driverName = new JTextField();
-        driverName.setColumns(5);
-        settingsPanel.add(driverName, "8, 8");
-        
+//        JLabel lblBacklashOffsetX = new JLabel("Backlash Offset X [Units]");
+//        settingsPanel.add(lblBacklashOffsetX, "2, 6, right, default");
+//
+//        backlashOffsetXTf = new JTextField();
+//        settingsPanel.add(backlashOffsetXTf, "4, 6, fill, default");
+//        backlashOffsetXTf.setColumns(5);
+//
+//        JLabel lblBacklashOffsetY = new JLabel("Backlash Offset Y [Units]");
+//        settingsPanel.add(lblBacklashOffsetY, "6, 6, right, default");
+//
+//        backlashOffsetYTf = new JTextField();
+//        settingsPanel.add(backlashOffsetYTf, "8, 6, fill, default");
+//        backlashOffsetYTf.setColumns(5);
+//
+//        JLabel lblBacklashFeedSpeedFactor = new JLabel("Backlash Feed Rate Factor");
+//        settingsPanel.add(lblBacklashFeedSpeedFactor, "2, 8, right, default");
+//
+//        backlashFeedRateFactorTf = new JTextField();
+//        settingsPanel.add(backlashFeedRateFactorTf, "4, 8, fill, default");
+//        backlashFeedRateFactorTf.setColumns(5);
+
         JLabel lblNonSquarenessFactor = new JLabel("Non-Squareness Factor");
-        settingsPanel.add(lblNonSquarenessFactor, "2, 10, right, default");
+        settingsPanel.add(lblNonSquarenessFactor, "2, 6, right, default");
         
         nonSquarenessFactorTf = new JTextField();
-        settingsPanel.add(nonSquarenessFactorTf, "4, 10, fill, default");
+        settingsPanel.add(nonSquarenessFactorTf, "4, 6, fill, default");
         nonSquarenessFactorTf.setColumns(5);
+
+        JLabel lblNewLabel = new JLabel("Driver Name");
+        settingsPanel.add(lblNewLabel, "6, 6, right, default");
+
+        driverName = new JTextField();
+        driverName.setColumns(5);
+        settingsPanel.add(driverName, "8, 6");
         
         JLabel lblVisualHoming = new JLabel("Visual Homing");
-        settingsPanel.add(lblVisualHoming, "6, 10, right, default");
+        settingsPanel.add(lblVisualHoming, "2, 8, right, default");
         
         visualHoming = new JCheckBox("");
-        settingsPanel.add(visualHoming, "8, 10");
+        settingsPanel.add(visualHoming, "4, 8");
     }
 
     @Override
@@ -153,20 +153,14 @@ public class dPLCDriverSettings extends AbstractConfigurationWizard {
         
         addWrappedBinding(driver, "units", unitsCb, "selectedItem");
         addWrappedBinding(driver, "maxFeedRate", maxFeedRateTf, "text", intConverter);
-        addWrappedBinding(driver, "backlashOffsetX", backlashOffsetXTf, "text", doubleConverter);
-        addWrappedBinding(driver, "backlashOffsetY", backlashOffsetYTf, "text", doubleConverter);
         addWrappedBinding(driver, "nonSquarenessFactor", nonSquarenessFactorTf, "text", doubleConverterFine);
-        addWrappedBinding(driver, "backlashFeedRateFactor", backlashFeedRateFactorTf, "text", doubleConverter);
         addWrappedBinding(driver, "moveTimeoutMilliseconds", moveWaitTimeTf, "text", intConverter);
         addWrappedBinding(driver, "connectWaitTimeMilliseconds", commandTimeoutTf, "text", intConverter);
         addWrappedBinding(driver, "name", driverName, "text");
         addWrappedBinding(driver, "visualHomingEnabled", visualHoming, "selected");
         
         ComponentDecorators.decorateWithAutoSelect(maxFeedRateTf);
-        ComponentDecorators.decorateWithAutoSelect(backlashOffsetXTf);
         ComponentDecorators.decorateWithAutoSelect(nonSquarenessFactorTf);
-        ComponentDecorators.decorateWithAutoSelect(backlashOffsetYTf);
-        ComponentDecorators.decorateWithAutoSelect(backlashFeedRateFactorTf);
         ComponentDecorators.decorateWithAutoSelect(commandTimeoutTf);
         ComponentDecorators.decorateWithAutoSelect(moveWaitTimeTf);
         ComponentDecorators.decorateWithAutoSelect(driverName);
@@ -299,9 +293,6 @@ public class dPLCDriverSettings extends AbstractConfigurationWizard {
         }
     };
     private JTextField maxFeedRateTf;
-    private JTextField backlashOffsetXTf;
-    private JTextField backlashOffsetYTf;
-    private JTextField backlashFeedRateFactorTf;
     private JTextField nonSquarenessFactorTf;
     private JTextField commandTimeoutTf;
     private JTextField moveWaitTimeTf;
