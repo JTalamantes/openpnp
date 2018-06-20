@@ -25,7 +25,7 @@ import org.openpnp.machine.reference.ReferenceHeadMountable;
 import org.openpnp.machine.reference.ReferenceMachine;
 import org.openpnp.machine.reference.ReferenceNozzle;
 import org.openpnp.machine.reference.ReferencePasteDispenser;
-import org.openpnp.machine.reference.driver.wizards.dPLCDriverSettings;
+import org.openpnp.machine.reference.driver.wizards.DPLCDriverSettings;
 import org.openpnp.model.Configuration;
 import org.openpnp.model.LengthUnit;
 import org.openpnp.model.Location;
@@ -49,7 +49,7 @@ import com.ghgande.j2mod.modbus.ModbusException;
  * @author jtalamantes
  *
  */
-public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable {
+public class DPLCDriver extends AbstractModbusDriver implements Named, Runnable {
 
 	@Attribute(required = false)
 	protected LengthUnit units = LengthUnit.Millimeters;
@@ -64,7 +64,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 	protected int moveTimeoutMilliseconds = 5000;
 
 	@Attribute(required = false)
-	protected int connectWaitTimeMilliseconds = 3000;
+	protected int connectWaitTimeMilliseconds = 100;
 
 	@Attribute(required = false)
 	protected boolean visualHomingEnabled = false;
@@ -73,26 +73,25 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 	protected Location homingFiducialLocation = new Location(LengthUnit.Millimeters);
 
 	@ElementList(required = false)
-	protected List<dPLCDriver> subDrivers = new ArrayList<>();
+	protected List<DPLCDriver> subDrivers = new ArrayList<>();
 
 	@ElementList(required = false)
 	protected List<Axis> axes = new ArrayList<>();
 
 	@Attribute(required = false)
-	protected String name = "dPLCDriver";
+	protected String name = "DPLCDriver";
 
 	boolean connected;
 	private boolean disconnectRequested;
 	private Thread readerThread;
-	private Set<Nozzle> pickedNozzles = new HashSet<>();
-	private dPLCDriver parent = null;
+	private DPLCDriver parent = null;
 
 	@Commit
 	public void commit() {
 		for (Axis axis : axes) {
 			axis.master = this;
 		}
-		for (dPLCDriver driver : subDrivers) {
+		for (DPLCDriver driver : subDrivers) {
 			driver.parent = this;
 		}
 	}
@@ -121,6 +120,8 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 		// Disable the machine
 		setEnabled(false);
+		//Load control data
+		this.holdings[1].setValue(this.axes.size());
 
 		connected = true;
 	}
@@ -133,7 +134,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		if (connected) {
 			if (enabled) {
 				// enable controller
-				this.holdings[0].setValue((short) 0x01);
+				this.holdings[0].setValue((short) 1);
 			} else {
 				// disable controller
 				this.holdings[0].setValue((short) 0x0);
@@ -233,9 +234,17 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		}
 
 		// Write Home Position and wait for command to be done
-		for (Axis axis : axes) {
-			while (!axis.isInHome());
+		//Execute command
+		while(this.inputs.getBit(0)){
+			updateData();
+		};
+		this.coils.setBit(0, true);
+		//Wait ACK
+		while (! this.inputs.getBit(0)) {
+			continue;
 		}
+		//Done command
+		this.coils.setBit(0, false);
 
 		for (ReferenceDriver driver : subDrivers) {
 			driver.home(head);
@@ -262,6 +271,18 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 				if (yAxis != null) {
 					yAxis.setCoordinate(yHomeCoordinate);
 				}
+
+				//Execute command
+				while(this.inputs.getBit(0)){
+					updateData();
+				};
+				this.coils.setBit(0, true);
+				//Wait ACK
+				while (! this.inputs.getBit(0)) {
+					continue;
+				}
+				//Done command
+				this.coils.setBit(0, false);
 
 				// //Save new home in controller
 				// String g92command = getCommand(null, CommandType.POST_VISION_HOME_COMMAND);
@@ -293,7 +314,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		// additional info might be on subdrivers (note that subdrivers can only be one
 		// level deep)
 		for (ReferenceDriver driver : subDrivers) {
-			dPLCDriver d = (dPLCDriver) driver;
+			DPLCDriver d = (DPLCDriver) driver;
 			if (d.getAxis(hm, Axis.Type.X) != null) {
 				xAxis = d.getAxis(hm, Axis.Type.X);
 			}
@@ -350,21 +371,17 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		}
 
 		// Check that the commanded position isn't negative
-		if (x < 0) {
-			throw new Exception("X Axis position can't be negative");
-		}
-		if (y < 0) {
-			throw new Exception("Y Axis position can't be negative");
-		}
-		if (z < 0) {
-			throw new Exception("Z Axis position can't be negative");
-		}
+//		if (xAxis != null && x < 0) {
+//			throw new Exception("X Axis position can't be negative");
+//		}
+//		if (yAxis != null && y < 0) {
+//			throw new Exception("Y Axis position can't be negative");
+//		}
+//		if (zAxis != null && z > 0) {
+//			throw new Exception("Z Axis position can't be positive");
+//		}
 
-		// If no axes are included in the move, there's nothing to do, so just return.
-		if (xAxis == null && yAxis == null && zAxis == null && rotationAxis == null) {
-			return;
-		}
-
+		// If no axes are included in the move, there's nothing to do.
 		if (xAxis != null || yAxis != null || zAxis != null || rotationAxis != null) {
 			// //Verify that the position isn't bigger than the length of the actuator
 			 if (xAxis != null && xAxis.getLength() != 0 && x > xAxis.getLength()) {
@@ -422,18 +439,18 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 			if (includeX || includeY || includeZ || includeRotation) {
 				//Set speed factor
 				float speedValue;
-				speedValue = ((maxFeedRate * 100)  / maxFeedRate);
+				speedValue = maxFeedRate * (float)speed;
 				// Send the position to move
 				if (xAxis != null) {
-					xAxis.setSpeed(speedValue);
+					xAxis.setSpeed(2000);
 					xAxis.setCoordinate(x);
 				}
 				if (yAxis != null) {
-					yAxis.setSpeed(speedValue);
+					yAxis.setSpeed(500);
 					yAxis.setCoordinate(y);
 				}
 				if (zAxis != null) {
-					zAxis.setSpeed(speedValue);
+					zAxis.setSpeed(1000);
 					zAxis.setCoordinate(z);
 				}
 				if (rotationAxis != null) {
@@ -443,29 +460,21 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 				Logger.debug("moveTo({}, {}, {}, {})...", x, y, z, rotation);
 
+				//Execute command
+				while(this.inputs.getBit(0)){
+					updateData();
+				};
+				this.coils.setBit(0, true);
 				// Wait for command done
 				long t = System.currentTimeMillis();
 				boolean done = false;
-				while (!done && System.currentTimeMillis() - t < moveTimeoutMilliseconds) {
-					// Is it done? Check all involved axis
-					if (xAxis != null && !xAxis.movementDone()) {
-						continue;
-					}
-
-					if (yAxis != null && !yAxis.movementDone()) {
-						continue;
-					}
-
-					if (zAxis != null && !zAxis.movementDone()) {
-						continue;
-					}
-
-					if (rotationAxis != null && !rotationAxis.movementDone()) {
-						continue;
-					}
-
-					done = true;
+				while (!done && ((System.currentTimeMillis() - t) < moveTimeoutMilliseconds)) {
+					//Check done
+					updateData();
+					done = this.inputs.getBit(0);
 				}
+				//Execute command
+				this.coils.setBit(0, false);
 				if (!done) {
 					throw new Exception("Timed out waiting for move to complete.");
 				}
@@ -594,8 +603,9 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		disconnectRequested = true;
 		connected = false;
 
+        Thread th = Thread.currentThread();
 		try {
-			if (readerThread != null && readerThread.isAlive()) {
+			if (readerThread != null && readerThread.isAlive() && (Thread.currentThread() != readerThread)) {
 				readerThread.join(3000);
 			}
 		} catch (Exception e) {
@@ -632,6 +642,12 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 				} catch (InterruptedException | ModbusException e) {
 					Logger.error("modbus update error", e);
 					this.disconnect();
+
+                    ReferenceMachine machine = ((ReferenceMachine) Configuration.get().getMachine());
+                    for (Head head : Configuration.get().getMachine().getHeads()) {
+                        machine.fireMachineDisabled("Modbus connection error");
+                    }
+                    break;
 				}
 			}
 		}
@@ -654,11 +670,11 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		return true;
 	}
 
-	protected void updateData() throws ModbusException {
+	protected synchronized void updateData() throws ModbusException {
 		// Read Contacts
-		// readDiscreteInputs();
+		readDiscreteInputs();
 		// Write Coils
-		// writeCoils();
+		writeCoils();
 		// Read Input Reg
 		readInputReg();
 		// Write Holdings
@@ -667,7 +683,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 	@Override
 	public String getPropertySheetHolderTitle() {
-		return getName() == null ? "dPLCDriver" : getName();
+		return getName() == null ? "dPLC Driver" : getName();
 	}
 
 	@Override
@@ -681,7 +697,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 	public PropertySheet[] getPropertySheets() {
 		return new PropertySheet[] { new PropertySheetWizardAdapter(super.getConfigurationWizard(), "Modbus"),
-				new PropertySheetWizardAdapter(new dPLCDriverSettings(this), "dPLC") };
+				new PropertySheetWizardAdapter(new DPLCDriverSettings(this), "dPLC") };
 	}
 
 	@Override
@@ -702,8 +718,8 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 		@Override
 		public void actionPerformed(ActionEvent arg0) {
-			dPLCDriver driver = new dPLCDriver();
-			driver.parent = dPLCDriver.this;
+			DPLCDriver driver = new DPLCDriver();
+			driver.parent = DPLCDriver.this;
 			subDrivers.add(driver);
 			fireIndexedPropertyChange("subDrivers", subDrivers.size() - 1, null, driver);
 		}
@@ -722,8 +738,8 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 					"Are you sure you want to delete the selected sub-driver?", "Delete Sub-Driver?",
 					JOptionPane.YES_NO_OPTION);
 			if (ret == JOptionPane.YES_OPTION) {
-				parent.subDrivers.remove(dPLCDriver.this);
-				parent.fireIndexedPropertyChange("subDrivers", subDrivers.size() - 1, dPLCDriver.this, null);
+				parent.subDrivers.remove(DPLCDriver.this);
+				parent.fireIndexedPropertyChange("subDrivers", subDrivers.size() - 1, DPLCDriver.this, null);
 			}
 		}
 	};
@@ -815,16 +831,16 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		private int pumpOutput = 0;
 
 		@Attribute(required = false)
-		private float speed = 100; // mm/s
+		private float speed = 300; // mm/s
 
 		@Attribute(required = false)
-		private float tolerance = 0.1f; // mm
+		private float tolerance = 0.01f; // mm
 
 		@Attribute(required = false)
-		private byte acceleration = 20; // % of max
+		private byte acceleration = 127; // % of max
 
 		@Attribute(required = false)
-		private byte deceleration = 20; // % of max
+		private byte deceleration = 127; // % of max
 
 		@Attribute(required = false)
 		private byte torque = 0;
@@ -832,18 +848,21 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		@Attribute(required = false)
 		private int length = 0; // Size of the actuator
 
+		@Attribute(required = false)
+		private boolean inverted = false; // Direction of movemet
+
 		/**
 		 * Stores the current value for this axis.
 		 */
 		private double coordinate = 0;
 		private byte output = 0;
-		private dPLCDriver master;
+		private DPLCDriver master;
 
 		public Axis() {
 			// TODO Auto-generated constructor stub
 		}
 
-		public Axis(String name, int slotNum, Type type, double homeCoordinate, dPLCDriver master,
+		public Axis(String name, int slotNum, Type type, double homeCoordinate, DPLCDriver master,
 				String... headMountableIds) {
 			this.master = master;
 			this.name = name;
@@ -854,11 +873,11 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 			updateParameters();
 		}
 
-		public dPLCDriver getMaster() {
+		public DPLCDriver getMaster() {
 			return master;
 		}
 
-		public void setMaster(dPLCDriver master) {
+		public void setMaster(DPLCDriver master) {
 			this.master = master;
 		}
 
@@ -898,12 +917,12 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 				}
 			}
 
-			return readCoordinate;
+			return inverted ? -readCoordinate : readCoordinate;
 		}
 
 		public void setCoordinate(double coordinate) {
 			// Write coordinate to modbus
-			this.coordinate = coordinate;
+			this.coordinate = inverted ? -coordinate : coordinate;;
 			updateParameters();
 		}
 
@@ -1021,10 +1040,6 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 			updateParameters();
 		}
 
-		public boolean movementDone() {
-			return compareCoordinate((float) coordinate);
-		}
-
 		public int getLength() {
 			return length;
 		}
@@ -1053,7 +1068,7 @@ public class dPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 			diff = Math.abs(coordinate - getCoordinate());
 
-			if (diff < this.tolerance) {
+			if (diff < 0.1) {
 				return true;
 			}
 

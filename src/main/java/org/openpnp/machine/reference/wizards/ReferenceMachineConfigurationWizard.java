@@ -18,10 +18,10 @@ import org.openpnp.gui.support.MutableLocationProxy;
 import org.openpnp.machine.openbuilds.OpenBuildsDriver;
 import org.openpnp.machine.reference.ReferenceDriver;
 import org.openpnp.machine.reference.ReferenceMachine;
+import org.openpnp.machine.reference.driver.DPLCDriver;
 import org.openpnp.machine.reference.driver.GcodeDriver;
 import org.openpnp.machine.reference.driver.LinuxCNC;
 import org.openpnp.machine.reference.driver.NullDriver;
-import org.openpnp.machine.reference.driver.dPLCDriver;
 import org.openpnp.model.Configuration;
 
 import com.jgoodies.forms.layout.ColumnSpec;
@@ -60,7 +60,7 @@ public class ReferenceMachineConfigurationWizard extends AbstractConfigurationWi
         comboBoxDriver.addItem(GcodeDriver.class.getCanonicalName());
         comboBoxDriver.addItem(LinuxCNC.class.getCanonicalName());
         comboBoxDriver.addItem(OpenBuildsDriver.class.getCanonicalName());
-        comboBoxDriver.addItem(dPLCDriver.class.getCanonicalName());
+        comboBoxDriver.addItem(DPLCDriver.class.getCanonicalName());
 
         JPanel panelLocations = new JPanel();
         panelLocations.setBorder(new TitledBorder(null, "Locations", TitledBorder.LEADING,

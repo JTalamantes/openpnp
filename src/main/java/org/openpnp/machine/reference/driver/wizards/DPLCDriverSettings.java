@@ -29,7 +29,7 @@ import org.openpnp.gui.support.DoubleConverter;
 import org.openpnp.gui.support.Icons;
 import org.openpnp.gui.support.IntegerConverter;
 import org.openpnp.gui.support.MessageBoxes;
-import org.openpnp.machine.reference.driver.dPLCDriver;
+import org.openpnp.machine.reference.driver.DPLCDriver;
 import org.openpnp.model.Configuration;
 import org.openpnp.model.LengthUnit;
 import org.openpnp.spi.Actuator;
@@ -45,10 +45,10 @@ import com.jgoodies.forms.layout.FormSpecs;
 import com.jgoodies.forms.layout.RowSpec;
 import javax.swing.JCheckBox;
 
-public class dPLCDriverSettings extends AbstractConfigurationWizard {
-    private final dPLCDriver driver;
+public class DPLCDriverSettings extends AbstractConfigurationWizard {
+    private final DPLCDriver driver;
 
-    public dPLCDriverSettings(dPLCDriver driver) {
+    public DPLCDriverSettings(DPLCDriver driver) {
         this.driver = driver;
         
         JPanel settingsPanel = new JPanel();
@@ -101,27 +101,6 @@ public class dPLCDriverSettings extends AbstractConfigurationWizard {
         moveWaitTimeTf = new JTextField();
         settingsPanel.add(moveWaitTimeTf, "4, 4, fill, default");
         moveWaitTimeTf.setColumns(5);
-        
-//        JLabel lblBacklashOffsetX = new JLabel("Backlash Offset X [Units]");
-//        settingsPanel.add(lblBacklashOffsetX, "2, 6, right, default");
-//
-//        backlashOffsetXTf = new JTextField();
-//        settingsPanel.add(backlashOffsetXTf, "4, 6, fill, default");
-//        backlashOffsetXTf.setColumns(5);
-//
-//        JLabel lblBacklashOffsetY = new JLabel("Backlash Offset Y [Units]");
-//        settingsPanel.add(lblBacklashOffsetY, "6, 6, right, default");
-//
-//        backlashOffsetYTf = new JTextField();
-//        settingsPanel.add(backlashOffsetYTf, "8, 6, fill, default");
-//        backlashOffsetYTf.setColumns(5);
-//
-//        JLabel lblBacklashFeedSpeedFactor = new JLabel("Backlash Feed Rate Factor");
-//        settingsPanel.add(lblBacklashFeedSpeedFactor, "2, 8, right, default");
-//
-//        backlashFeedRateFactorTf = new JTextField();
-//        settingsPanel.add(backlashFeedRateFactorTf, "4, 8, fill, default");
-//        backlashFeedRateFactorTf.setColumns(5);
 
         JLabel lblNonSquarenessFactor = new JLabel("Non-Squareness Factor");
         settingsPanel.add(lblNonSquarenessFactor, "2, 6, right, default");
@@ -236,7 +215,7 @@ public class dPLCDriverSettings extends AbstractConfigurationWizard {
                 File file = new File(new File(fileDialog.getDirectory()), filename);
                 Serializer ser = Configuration.createSerializer();
                 FileReader r = new FileReader(file);
-                dPLCDriver d = ser.read(dPLCDriver.class, r);
+                DPLCDriver d = ser.read(DPLCDriver.class, r);
                 // copySettings(d, driver);
             }
             catch (Exception e) {
@@ -283,7 +262,7 @@ public class dPLCDriverSettings extends AbstractConfigurationWizard {
                 Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
                 String s = (String) clipboard.getData(DataFlavor.stringFlavor);
                 StringReader r = new StringReader(s);
-                dPLCDriver d = ser.read(dPLCDriver.class, s);
+                DPLCDriver d = ser.read(DPLCDriver.class, s);
                 // copySettings(d, driver);
                 MessageBoxes.infoBox("Pasted dPLC", "Pasted dPLC from Clipboard");
             }

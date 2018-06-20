@@ -108,9 +108,9 @@ public abstract class AbstractModbusDriver extends AbstractModelObject implement
 	@Attribute(required = false)
 	private int coilsCount = 0;
 	@Attribute(required = false)
-	private int inputRegCount = 0;
+	private int inputRegCount = 60;
 	@Attribute(required = false)
-	private int holdingsCount = 0;
+	private int holdingsCount = 60;
 	//Modbus Buffers
 	protected Register[] holdings;
 	protected InputRegister[] inputReg;
@@ -282,8 +282,8 @@ public abstract class AbstractModbusDriver extends AbstractModelObject implement
 			return;
 		}
 		//Read Input Register
-		Register[] Reg = this.modbusMaster.readMultipleRegisters(holdingsOffset, holdingsCount);
-		holdings = Reg;
+		Register[] reg = this.modbusMaster.readMultipleRegisters(holdingsOffset, holdingsCount);
+		holdings = reg;
 	}
 
 	protected synchronized void writeHoldings() throws ModbusException{
@@ -299,36 +299,23 @@ public abstract class AbstractModbusDriver extends AbstractModelObject implement
 			return;
 		}
 
-		int iOrder = -1;
-		//Get if it is the MSB or LSB
-		switch (order) {
-		case LSB:
-			iOrder = 0;
-			break;
-		case MSB:
-			iOrder = 1;
-			break;
-		default:
-			return;
-		}
-
 		switch(mbType){
-		case HOLDINGS:
-			Register tempHold = this.holdings[address];
-			byte[] values = tempHold.toBytes();
+			case HOLDINGS:
+				Register tempHold = this.holdings[address];
+				byte[] values = tempHold.toBytes();
 
-			if(iOrder==0){
-				values[0] = data;
-			}
-			else{
-				values[1] = data;
-			}
+				if(order == ByteOrder.LSB){
+					values[0] = data;
+				}
+				else{
+					values[1] = data;
+				}
 
-			tempHold.setValue(values);
-			this.holdings[address] = tempHold;
-			break;
-		default:
-			break;
+				tempHold.setValue(values);
+				this.holdings[address] = tempHold;
+				break;
+			default:
+				break;
 		}
 	}
 	//16 Bits int
@@ -394,22 +381,10 @@ public abstract class AbstractModbusDriver extends AbstractModelObject implement
 
 		switch(mbType){
 		case HOLDINGS:
-			SimpleRegister dataHH = new SimpleRegister();
-			SimpleRegister dataHL = new SimpleRegister();
-			SimpleRegister dataLH = new SimpleRegister();
-			SimpleRegister dataLL = new SimpleRegister();
-
-			//First 32 bits
-			dataLL.setValue((short)dataLong.intValue());
-			dataLH.setValue(dataLong.intValue()>>16);
-			//Last 32 bits
-			dataHL.setValue((short)(dataLong>>24));
-			dataHH.setValue((short)(dataLong>>32));
-
 			this.holdings[address].setValue((short)dataLong.intValue());
 			this.holdings[address + 1].setValue((short)(dataLong >> 16));
-			this.holdings[address + 2].setValue((short)(dataLong >> 24));
-			this.holdings[address + 3].setValue((short)(dataLong >> 32));
+			this.holdings[address + 2].setValue((short)(dataLong >> 32));
+			this.holdings[address + 3].setValue((short)(dataLong >> 48));
 			break;
 		default:
 			break;
@@ -418,21 +393,11 @@ public abstract class AbstractModbusDriver extends AbstractModelObject implement
 	
 	///8 bits INT
     public Byte getByteData(DataType mbType, int address, ByteOrder order){
-        Byte data = (byte)0;
-        
-        int iOrder = -1;
-        //Get if it is the MSB or LSB
-        switch (order) {
-            case LSB:
-                iOrder = 0;
-                break;
-            case MSB:
-                iOrder = 1;
-                break;
-            default:
-            	return null;
-        }
-        
+        Byte data;
+
+		//Get if it is the MSB or LSB
+        int iOrder = order == ByteOrder.LSB ? 0 : 1;
+
         switch(mbType){            
         case HOLDINGS:
             data = this.holdings[address].toBytes()[iOrder]; //Get the lowest byte of the register
@@ -575,7 +540,9 @@ public abstract class AbstractModbusDriver extends AbstractModelObject implement
 	/**
 	 * Modbus/TCP Master facade, based on the {@link ModbusTCPMaster} with some additional
 	 * features.
+	 * Deprecated, use instead {@link ModbusTCPMaster}.
 	 */
+	@Deprecated
 	public class ModbusMasterTCP{
 
 		private TCPMasterConnection m_Connection;
