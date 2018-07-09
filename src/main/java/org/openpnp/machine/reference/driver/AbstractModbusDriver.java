@@ -104,9 +104,9 @@ public abstract class AbstractModbusDriver extends AbstractModelObject implement
 	private int holdingsOffset = 0;
 	//Modbus Sizes
 	@Attribute(required = false)
-	private int discreteInputsCount = 0;
+	private int discreteInputsCount = 30;
 	@Attribute(required = false)
-	private int coilsCount = 0;
+	private int coilsCount = 30;
 	@Attribute(required = false)
 	private int inputRegCount = 60;
 	@Attribute(required = false)

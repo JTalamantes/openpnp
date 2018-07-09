@@ -33,7 +33,6 @@ import org.openpnp.model.Named;
 import org.openpnp.model.Part;
 import org.openpnp.spi.Head;
 import org.openpnp.spi.HeadMountable;
-import org.openpnp.spi.Nozzle;
 import org.openpnp.spi.PropertySheetHolder;
 import org.openpnp.spi.base.SimplePropertySheetHolder;
 import org.simpleframework.xml.Attribute;
@@ -55,7 +54,16 @@ public class DPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 	protected LengthUnit units = LengthUnit.Millimeters;
 
 	@Attribute(required = false)
-	protected int maxFeedRate = 1000;
+	protected int maxFeedRateX = 1000;
+
+	@Attribute(required = false)
+	protected int maxFeedRateY = 1000;
+
+	@Attribute(required = false)
+	protected int maxFeedRateZ = 1000;
+
+	@Attribute(required = false)
+	protected int maxFeedRateTheta = 1000;
 
 	@Attribute(required = false)
 	protected double nonSquarenessFactor = 0;
@@ -383,7 +391,23 @@ public class DPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 		// If no axes are included in the move, there's nothing to do.
 		if (xAxis != null || yAxis != null || zAxis != null || rotationAxis != null) {
-			// //Verify that the position isn't bigger than the length of the actuator
+			 // For each included axis, if the axis has a transform, transform the target
+			 // coordinate
+			 // to it's raw value.
+			 if (xAxis != null && xAxis.getTransform() != null) {
+				x = xAxis.getTransform().toRaw(xAxis, hm, x);
+			 }
+			 if (yAxis != null && yAxis.getTransform() != null) {
+				y = yAxis.getTransform().toRaw(yAxis, hm, y);
+			 }
+			 if (zAxis != null && zAxis.getTransform() != null) {
+				z = zAxis.getTransform().toRaw(zAxis, hm, z);
+			 }
+			 if (rotationAxis != null && rotationAxis.getTransform() != null) {
+				rotation = rotationAxis.getTransform().toRaw(rotationAxis, hm, rotation);
+			 }
+
+			 //Verify that the position isn't bigger than the length of the actuator
 			 if (xAxis != null && xAxis.getLength() != 0 && x > xAxis.getLength()) {
 				 throw new Exception("X Axis position out of length");
 			 }
@@ -394,37 +418,21 @@ public class DPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 				 throw new Exception("Z Axis position out of length");
 			 }
 
-			// For each included axis, if the axis has a transform, transform the target
-			// coordinate
-			// to it's raw value.
-			if (xAxis != null && xAxis.getTransform() != null) {
-				x = xAxis.getTransform().toRaw(xAxis, hm, x);
-			}
-			if (yAxis != null && yAxis.getTransform() != null) {
-				y = yAxis.getTransform().toRaw(yAxis, hm, y);
-			}
-			if (zAxis != null && zAxis.getTransform() != null) {
-				z = zAxis.getTransform().toRaw(zAxis, hm, z);
-			}
-			if (rotationAxis != null && rotationAxis.getTransform() != null) {
-				rotation = rotationAxis.getTransform().toRaw(rotationAxis, hm, rotation);
-			}
-
 			//nonSquarenessFactor gets applied to X and is multiplied by Y
 
 			boolean includeX = false, includeY = false, includeZ = false, includeRotation = false;
 
 			// Primary checks to see if an axis should move
-			if (xAxis != null && xAxis.getCoordinate() != x) {
+			if (xAxis != null && xAxis.getCommandCoordinate() != x) {
 				includeX = true;
 			}
-			if (yAxis != null && yAxis.getCoordinate() != y) {
+			if (yAxis != null && yAxis.getCommandCoordinate() != y) {
 				includeY = true;
 			}
-			if (zAxis != null && zAxis.getCoordinate() != z) {
+			if (zAxis != null && zAxis.getCommandCoordinate() != z) {
 				includeZ = true;
 			}
-			if (rotationAxis != null && rotationAxis.getCoordinate() != rotation) {
+			if (rotationAxis != null && rotationAxis.getCommandCoordinate() != rotation) {
 				includeRotation = true;
 			}
 
@@ -437,24 +445,21 @@ public class DPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 
 			// Only give a command when move is necessary
 			if (includeX || includeY || includeZ || includeRotation) {
-				//Set speed factor
-				float speedValue;
-				speedValue = maxFeedRate * (float)speed;
 				// Send the position to move
 				if (xAxis != null) {
-					xAxis.setSpeed(2000);
+					xAxis.setSpeed(maxFeedRateX * (float)speed);
 					xAxis.setCoordinate(x);
 				}
 				if (yAxis != null) {
-					yAxis.setSpeed(500);
+					yAxis.setSpeed(maxFeedRateY * (float)speed);
 					yAxis.setCoordinate(y);
 				}
 				if (zAxis != null) {
-					zAxis.setSpeed(1000);
+					zAxis.setSpeed(maxFeedRateZ * (float)speed);
 					zAxis.setCoordinate(z);
 				}
 				if (rotationAxis != null) {
-					rotationAxis.setSpeed(speedValue);
+					rotationAxis.setSpeed(maxFeedRateTheta);
 					rotationAxis.setCoordinate(rotation);
 				}
 
@@ -760,12 +765,36 @@ public class DPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 		return this.nonSquarenessFactor;
 	}
 
-	public int getMaxFeedRate() {
-		return maxFeedRate;
+	public int getMaxFeedRateX() {
+		return maxFeedRateX;
 	}
 
-	public void setMaxFeedRate(int maxFeedRate) {
-		this.maxFeedRate = maxFeedRate;
+	public void setMaxFeedRateX(int maxFeedRateX) {
+		this.maxFeedRateX = maxFeedRateX;
+	}
+
+	public int getMaxFeedRateY() {
+		return maxFeedRateY;
+	}
+
+	public void setMaxFeedRateY(int maxFeedRateY) {
+		this.maxFeedRateY = maxFeedRateY;
+	}
+
+	public int getMaxFeedRateZ() {
+		return maxFeedRateZ;
+	}
+
+	public void setMaxFeedRateZ(int maxFeedRateZ) {
+		this.maxFeedRateZ = maxFeedRateZ;
+	}
+
+	public int getMaxFeedRateTheta() {
+		return maxFeedRateTheta;
+	}
+
+	public void setMaxFeedRateTheta(int maxFeedRateTheta) {
+		this.maxFeedRateTheta = maxFeedRateTheta;
 	}
 
 	public int getMoveTimeoutMilliseconds() {
@@ -938,10 +967,6 @@ public class DPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 			this.homeCoordinate = homeCoordinate;
 		}
 
-		public boolean isInHome() {
-			return compareCoordinate((float) this.homeCoordinate);
-		}
-
 		public double getTransformedCoordinate(HeadMountable hm) {
 			if (this.transform != null) {
 				return transform.toTransformed(this, hm, this.getCoordinate());
@@ -1061,18 +1086,6 @@ public class DPLCDriver extends AbstractModbusDriver implements Named, Runnable 
 				master.setByte(torque, DataType.HOLDINGS, 9 + offset, ByteOrder.MSB);
 				master.setByte(output, DataType.HOLDINGS, 9 + offset, ByteOrder.LSB);
 			}
-		}
-
-		private boolean compareCoordinate(float coordinate) {
-			float diff;
-
-			diff = Math.abs(coordinate - getCoordinate());
-
-			if (diff < 0.1) {
-				return true;
-			}
-
-			return false;
 		}
 	}
 

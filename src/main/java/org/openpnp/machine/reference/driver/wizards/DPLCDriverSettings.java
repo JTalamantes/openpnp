@@ -74,19 +74,28 @@ public class DPLCDriverSettings extends AbstractConfigurationWizard {
                 FormSpecs.DEFAULT_ROWSPEC,
                 FormSpecs.RELATED_GAP_ROWSPEC,
                 FormSpecs.DEFAULT_ROWSPEC,}));
-        
+
+        //Right side
         JLabel lblUnits = new JLabel("Units");
         settingsPanel.add(lblUnits, "6, 2, right, default");
         
         unitsCb = new JComboBox(LengthUnit.values());
         settingsPanel.add(unitsCb, "8, 2, fill, default");
-        
-        JLabel lblMaxFeedRate = new JLabel("Max Speed [Units/Seg]");
-        settingsPanel.add(lblMaxFeedRate, "6, 4, right, default");
-        
-        maxFeedRateTf = new JTextField();
-        settingsPanel.add(maxFeedRateTf, "8, 4, fill, default");
-        maxFeedRateTf.setColumns(5);
+
+        JLabel lblNewLabel = new JLabel("Driver Name");
+        settingsPanel.add(lblNewLabel, "6, 4, right, default");
+
+        driverName = new JTextField();
+        driverName.setColumns(5);
+        settingsPanel.add(driverName, "8, 4");
+
+        JLabel lblVisualHoming = new JLabel("Visual Homing");
+        settingsPanel.add(lblVisualHoming, "6, 6, right, default");
+
+        visualHoming = new JCheckBox("");
+        settingsPanel.add(visualHoming, "8, 6");
+
+        //Left Side
         
         JLabel lblCommandTimeoutms = new JLabel("Command Timeout [ms]");
         settingsPanel.add(lblCommandTimeoutms, "2, 2, right, default");
@@ -109,18 +118,33 @@ public class DPLCDriverSettings extends AbstractConfigurationWizard {
         settingsPanel.add(nonSquarenessFactorTf, "4, 6, fill, default");
         nonSquarenessFactorTf.setColumns(5);
 
-        JLabel lblNewLabel = new JLabel("Driver Name");
-        settingsPanel.add(lblNewLabel, "6, 6, right, default");
+        JLabel lblMaxFeedRateX = new JLabel("Max Speed X [Units/Seg]");
+        settingsPanel.add(lblMaxFeedRateX, "2, 8, right, default");
 
-        driverName = new JTextField();
-        driverName.setColumns(5);
-        settingsPanel.add(driverName, "8, 6");
-        
-        JLabel lblVisualHoming = new JLabel("Visual Homing");
-        settingsPanel.add(lblVisualHoming, "2, 8, right, default");
-        
-        visualHoming = new JCheckBox("");
-        settingsPanel.add(visualHoming, "4, 8");
+        maxFeedRateXTf = new JTextField();
+        settingsPanel.add(maxFeedRateXTf, "4, 8, fill, default");
+        maxFeedRateXTf.setColumns(5);
+
+        JLabel lblMaxFeedRateY = new JLabel("Max Speed Y [Units/Seg]");
+        settingsPanel.add(lblMaxFeedRateY, "6, 8, right, default");
+
+        maxFeedRateYTf = new JTextField();
+        settingsPanel.add(maxFeedRateYTf, "8, 8, fill, default");
+        maxFeedRateYTf.setColumns(5);
+
+        JLabel lblMaxFeedRateZ = new JLabel("Max Speed Z [Units/Seg]");
+        settingsPanel.add(lblMaxFeedRateZ, "2, 10, right, default");
+
+        maxFeedRateZTf = new JTextField();
+        settingsPanel.add(maxFeedRateZTf, "4, 10, fill, default");
+        maxFeedRateZTf.setColumns(5);
+
+        JLabel lblMaxFeedRateTheta = new JLabel("Max Speed Θ [Units/Seg]");
+        settingsPanel.add(lblMaxFeedRateTheta, "6, 10, right, default");
+
+        maxFeedRateThetaTf = new JTextField();
+        settingsPanel.add(maxFeedRateThetaTf, "8, 10, fill, default");
+        maxFeedRateThetaTf.setColumns(5);
     }
 
     @Override
@@ -131,14 +155,20 @@ public class DPLCDriverSettings extends AbstractConfigurationWizard {
         DoubleConverter doubleConverterFine = new DoubleConverter("%f");
         
         addWrappedBinding(driver, "units", unitsCb, "selectedItem");
-        addWrappedBinding(driver, "maxFeedRate", maxFeedRateTf, "text", intConverter);
+        addWrappedBinding(driver, "maxFeedRateX", maxFeedRateXTf, "text", intConverter);
+        addWrappedBinding(driver, "maxFeedRateY", maxFeedRateYTf, "text", intConverter);
+        addWrappedBinding(driver, "maxFeedRateZ", maxFeedRateZTf, "text", intConverter);
+        addWrappedBinding(driver, "maxFeedRateTheta", maxFeedRateThetaTf, "text", intConverter);
         addWrappedBinding(driver, "nonSquarenessFactor", nonSquarenessFactorTf, "text", doubleConverterFine);
         addWrappedBinding(driver, "moveTimeoutMilliseconds", moveWaitTimeTf, "text", intConverter);
         addWrappedBinding(driver, "connectWaitTimeMilliseconds", commandTimeoutTf, "text", intConverter);
         addWrappedBinding(driver, "name", driverName, "text");
         addWrappedBinding(driver, "visualHomingEnabled", visualHoming, "selected");
         
-        ComponentDecorators.decorateWithAutoSelect(maxFeedRateTf);
+        ComponentDecorators.decorateWithAutoSelect(maxFeedRateXTf);
+        ComponentDecorators.decorateWithAutoSelect(maxFeedRateYTf);
+        ComponentDecorators.decorateWithAutoSelect(maxFeedRateZTf);
+        ComponentDecorators.decorateWithAutoSelect(maxFeedRateThetaTf);
         ComponentDecorators.decorateWithAutoSelect(nonSquarenessFactorTf);
         ComponentDecorators.decorateWithAutoSelect(commandTimeoutTf);
         ComponentDecorators.decorateWithAutoSelect(moveWaitTimeTf);
@@ -271,7 +301,10 @@ public class DPLCDriverSettings extends AbstractConfigurationWizard {
             }
         }
     };
-    private JTextField maxFeedRateTf;
+    private JTextField maxFeedRateXTf;
+    private JTextField maxFeedRateYTf;
+    private JTextField maxFeedRateZTf;
+    private JTextField maxFeedRateThetaTf;
     private JTextField nonSquarenessFactorTf;
     private JTextField commandTimeoutTf;
     private JTextField moveWaitTimeTf;
