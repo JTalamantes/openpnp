@@ -243,9 +243,14 @@ public class JobPanel extends JPanel {
                     // A generic table update in response to TableDataChange
                     // event
                 	updatePanelizationIconState();
-                	
                 }
-
+                if (job.getBoardLocations().size() > 0) {
+					BoardLocation boardLocation = getSelectedBoardLocation();
+					jobPlacementsPanel.setBoardLocation(boardLocation);
+                }
+                else {
+                    jobPlacementsPanel.setBoardLocation(null);
+                }
             }
         });
 
@@ -471,6 +476,7 @@ public class JobPanel extends JPanel {
         job.addPropertyChangeListener("file", titlePropertyChangeListener);
         updateTitle();
         updateJobActions();
+        getJobPlacementsPanel().updateActivePlacements();
         Configuration.get().getBus().post(new JobLoadedEvent(job));
     }
 

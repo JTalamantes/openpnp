@@ -23,6 +23,7 @@ import java.awt.AWTEvent;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Desktop;
+import java.awt.Dimension;
 import java.awt.EventQueue;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -56,6 +57,7 @@ import javax.swing.JMenuBar;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JProgressBar;
 import javax.swing.JSplitPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTextPane;
@@ -107,6 +109,24 @@ public class MainFrame extends JFrame {
     private static final String PREF_WINDOW_STYLE_MULTIPLE = "MainFrame.windowStyleMultiple";
     private static final boolean PREF_WINDOW_STYLE_MULTIPLE_DEF = false;
 
+    private static final String PREF_CAMERA_WINDOW_X = "CameraFrame.windowX";
+    private static final int PREF_CAMERA_WINDOW_X_DEF = 0;
+    private static final String PREF_CAMERA_WINDOW_Y = "CameraFrame.windowY";
+    private static final int PREF_CAMERA_WINDOW_Y_DEF = 0;
+    private static final String PREF_CAMERA_WINDOW_WIDTH = "CameraFrame.windowWidth";
+    private static final int PREF_CAMERA_WINDOW_WIDTH_DEF = 800;
+    private static final String PREF_CAMERA_WINDOW_HEIGHT = "CameraFrame.windowHeight";
+    private static final int PREF_CAMERA_WINDOW_HEIGHT_DEF = 600;
+
+    private static final String PREF_MACHINECONTROLS_WINDOW_X = "MachineControlsFrame.windowX";
+    private static final int PREF_MACHINECONTROLS_WINDOW_X_DEF = 0;
+    private static final String PREF_MACHINECONTROLS_WINDOW_Y = "MachineControlsFrame.windowY";
+    private static final int PREF_MACHINECONTROLS_WINDOW_Y_DEF = 0;
+    private static final String PREF_MACHINECONTROLS_WINDOW_WIDTH = "MachineControlsFrame.windowWidth";
+    private static final int PREF_MACHINECONTROLS_WINDOW_WIDTH_DEF = 490;
+    private static final String PREF_MACHINECONTROLS_WINDOW_HEIGHT = "MachineControlsFrame.windowHeight";
+    private static final int PREF_MACHINECONTROLS_WINDOW_HEIGHT_DEF = 340;
+
     private final Configuration configuration;
 
     private static MainFrame mainFrame;
@@ -120,6 +140,8 @@ public class MainFrame extends JFrame {
     private JPanel panelCameraAndInstructions;
     private JPanel panelMachine;
     private MachineSetupPanel machineSetupPanel;
+    private JDialog frameCamera;
+    private JDialog frameMachineControls;
 
     public static MainFrame get() {
         return mainFrame;
@@ -232,6 +254,8 @@ public class MainFrame extends JFrame {
         mnFile.addSeparator();
         mnFile.add(new JMenuItem(jobPanel.saveJobAction));
         mnFile.add(new JMenuItem(jobPanel.saveJobAsAction));
+        mnFile.addSeparator();
+        mnFile.add(new JMenuItem(saveConfigAction));
 
 
         // File -> Import
@@ -513,18 +537,40 @@ public class MainFrame extends JFrame {
         contentPane.add(panelStatusAndDros, BorderLayout.SOUTH);
         panelStatusAndDros.setLayout(new FormLayout(
                 new ColumnSpec[] {ColumnSpec.decode("default:grow"), ColumnSpec.decode("8px"),
+                        FormSpecs.RELATED_GAP_COLSPEC, FormSpecs.DEFAULT_COLSPEC, 
+                        FormSpecs.RELATED_GAP_COLSPEC, FormSpecs.DEFAULT_COLSPEC,
                         FormSpecs.RELATED_GAP_COLSPEC, FormSpecs.DEFAULT_COLSPEC,},
                 new RowSpec[] {RowSpec.decode("20px"),}));
 
+        
+        // Status Information
         lblStatus = new JLabel(" ");
         lblStatus.setBorder(new BevelBorder(BevelBorder.LOWERED, null, null, null, null));
         panelStatusAndDros.add(lblStatus, "1, 1");
+        
+        
+        // Placement Information
+        lblPlacements = new JLabel(" Placements: 0 / 0 Total | 0 / 0 Selected Board ");
+        lblPlacements.setBorder(new BevelBorder(BevelBorder.LOWERED, null, null, null, null));
+        panelStatusAndDros.add(lblPlacements, "4, 1");
+        
+        
+        // Placements Progress Bar
+        prgbrPlacements = new JProgressBar();
+        prgbrPlacements.setMinimum(0);
+        prgbrPlacements.setMaximum(100);
+        prgbrPlacements.setStringPainted(true);
+        prgbrPlacements.setPreferredSize(new Dimension(200, 16));
+        prgbrPlacements.setValue(0);
+        panelStatusAndDros.add(prgbrPlacements, "6, 1");
 
+        
+        // DRO 
         droLbl = new JLabel("X 0000.0000, Y 0000.0000, Z 0000.0000, R 0000.0000");
         droLbl.setOpaque(true);
         droLbl.setFont(new Font("Monospaced", Font.PLAIN, 13));
         droLbl.setBorder(new BevelBorder(BevelBorder.LOWERED, null, null, null, null));
-        panelStatusAndDros.add(droLbl, "4, 1");
+        panelStatusAndDros.add(droLbl, "8, 1");
 
         cameraPanel.setBorder(new TitledBorder(null, "Cameras", TitledBorder.LEADING,
                 TitledBorder.TOP, null, null));
@@ -564,21 +610,47 @@ public class MainFrame extends JFrame {
     public void splitWindows() {
         if (prefs.getBoolean(PREF_WINDOW_STYLE_MULTIPLE, PREF_WINDOW_STYLE_MULTIPLE_DEF)) {
             // pin panelCameraAndInstructions to a separate JFrame
-            JDialog frameCamera = new JDialog(this, "OpenPnp - Camera", false);
+            frameCamera = new JDialog(this, "OpenPnp - Camera", false);
             // as of today no smart way found to get an adjusted size
             // ... so main window size is used for the camera window
-            frameCamera.setSize(getFrames()[0].getSize());
             frameCamera.add(panelCameraAndInstructions);
             frameCamera.setVisible(true);
+            frameCamera.addComponentListener(cameraWindowListener);
+
+            if (prefs.getInt(PREF_CAMERA_WINDOW_WIDTH, 50) < 50) {
+                prefs.putInt(PREF_CAMERA_WINDOW_WIDTH, PREF_CAMERA_WINDOW_WIDTH_DEF);
+            }
+
+            if (prefs.getInt(PREF_CAMERA_WINDOW_HEIGHT, 50) < 50) {
+                prefs.putInt(PREF_CAMERA_WINDOW_HEIGHT, PREF_CAMERA_WINDOW_HEIGHT_DEF);
+            }
+
+            frameCamera.setBounds(prefs.getInt(PREF_CAMERA_WINDOW_X, PREF_CAMERA_WINDOW_X_DEF),
+                    prefs.getInt(PREF_CAMERA_WINDOW_Y, PREF_CAMERA_WINDOW_Y_DEF),
+                    prefs.getInt(PREF_CAMERA_WINDOW_WIDTH, PREF_CAMERA_WINDOW_WIDTH_DEF),
+                    prefs.getInt(PREF_CAMERA_WINDOW_HEIGHT, PREF_CAMERA_WINDOW_HEIGHT_DEF));
 
             // pin machineControlsPanel to a separate JFrame
-            JDialog frameMachineControls = new JDialog(this, "OpenPnp - Machine Controls", false);
+            frameMachineControls = new JDialog(this, "OpenPnp - Machine Controls", false);
             // as of today no smart way found to get an adjusted size
             // ... so hardcoded values used (usually not a good idea)
             frameMachineControls.add(machineControlsPanel);
             frameMachineControls.setVisible(true);
             frameMachineControls.pack();
+            frameMachineControls.addComponentListener(machineControlsWindowListener);
 
+            if (prefs.getInt(PREF_MACHINECONTROLS_WINDOW_WIDTH, 50) < 50) {
+                prefs.putInt(PREF_MACHINECONTROLS_WINDOW_WIDTH, PREF_MACHINECONTROLS_WINDOW_WIDTH_DEF);
+            }
+
+            if (prefs.getInt(PREF_MACHINECONTROLS_WINDOW_HEIGHT, 50) < 50) {
+                prefs.putInt(PREF_MACHINECONTROLS_WINDOW_HEIGHT, PREF_MACHINECONTROLS_WINDOW_HEIGHT_DEF);
+            }
+
+            frameMachineControls.setBounds(prefs.getInt(PREF_MACHINECONTROLS_WINDOW_X, PREF_MACHINECONTROLS_WINDOW_X_DEF),
+                    prefs.getInt(PREF_MACHINECONTROLS_WINDOW_Y, PREF_MACHINECONTROLS_WINDOW_Y_DEF),
+                    prefs.getInt(PREF_MACHINECONTROLS_WINDOW_WIDTH, PREF_MACHINECONTROLS_WINDOW_WIDTH_DEF),
+                    prefs.getInt(PREF_MACHINECONTROLS_WINDOW_HEIGHT, PREF_MACHINECONTROLS_WINDOW_HEIGHT_DEF));
             // move the splitPaneDivider to position 0 to fill the gap of the
             // relocated panels 'panelCameraAndInstructions' & 'machineControlsPanel'
             splitPaneMachineAndTabs.setDividerLocation(0);
@@ -700,6 +772,32 @@ public class MainFrame extends JFrame {
         dialog.setVisible(true);
     }
 
+    public boolean saveConfig() {
+        // Save the configuration
+        try {
+            Preferences.userRoot().flush();
+        }
+        catch (Exception e) {
+            MessageBoxes.errorBox(MainFrame.this, "Save Preferences", e);
+        }
+        
+        try {
+            configuration.save();
+        }
+        catch (Exception e) {
+			String message = "There was a problem saving the configuration. The reason was:\n\n" + e.getMessage()
+					+ "\n\n";
+			message = message.replaceAll("\n", "<br/>");
+			message = message.replaceAll("\r", "");
+			message = "<html><body width=\"400\">" + message + "</body></html>";
+			JOptionPane.showMessageDialog(this, message, "Configuration Save Error", JOptionPane.ERROR_MESSAGE);
+			return false;
+        }
+
+        Logger.debug("Config saved successfully!");
+        return true;
+    }
+
     public boolean quit() {
         Logger.info("Shutting down...");
         try {
@@ -752,6 +850,13 @@ public class MainFrame extends JFrame {
             lblStatus.setText(status);
         });
     }
+    
+    public void setPlacements(int CompletedPlacemnts, int TotalPlacements, int PlacementsBoard, int TotalPlacementsBoard) {
+        SwingUtilities.invokeLater(() -> {
+        	lblPlacements.setText(" Placements: " + CompletedPlacemnts + " / " + TotalPlacements + " Total | " + PlacementsBoard + " / " + TotalPlacementsBoard + " Selected Board ");
+        	prgbrPlacements.setValue((int)(((float)CompletedPlacemnts / (float)TotalPlacements) * 100.0f));
+        });
+    }
 
     public void showTab(String title) {
         int index = tabs.indexOfTab(title);
@@ -769,6 +874,34 @@ public class MainFrame extends JFrame {
         public void componentResized(ComponentEvent e) {
             prefs.putInt(PREF_WINDOW_WIDTH, getSize().width);
             prefs.putInt(PREF_WINDOW_HEIGHT, getSize().height);
+        }
+    };
+
+    private ComponentListener cameraWindowListener = new ComponentAdapter() {
+        @Override
+        public void componentMoved(ComponentEvent e) {
+            prefs.putInt(PREF_CAMERA_WINDOW_X, frameCamera.getLocation().x);
+            prefs.putInt(PREF_CAMERA_WINDOW_Y, frameCamera.getLocation().y);
+        }
+
+        @Override
+        public void componentResized(ComponentEvent e) {
+            prefs.putInt(PREF_CAMERA_WINDOW_WIDTH, frameCamera.getSize().width);
+            prefs.putInt(PREF_CAMERA_WINDOW_HEIGHT, frameCamera.getSize().height);
+        }
+    };
+
+    private ComponentListener machineControlsWindowListener = new ComponentAdapter() {
+        @Override
+        public void componentMoved(ComponentEvent e) {
+            prefs.putInt(PREF_MACHINECONTROLS_WINDOW_X, frameMachineControls.getLocation().x);
+            prefs.putInt(PREF_MACHINECONTROLS_WINDOW_Y, frameMachineControls.getLocation().y);
+        }
+
+        @Override
+        public void componentResized(ComponentEvent e) {
+            prefs.putInt(PREF_MACHINECONTROLS_WINDOW_WIDTH, frameMachineControls.getSize().width);
+            prefs.putInt(PREF_MACHINECONTROLS_WINDOW_HEIGHT, frameMachineControls.getSize().height);
         }
     };
 
@@ -813,6 +946,13 @@ public class MainFrame extends JFrame {
             }
             MessageBoxes.infoBox("Windows Style Changed",
                     "Window style has been changed. Please restart OpenPnP to see the changes.");
+        }
+    };
+
+    private Action saveConfigAction = new AbstractAction("Save Configuration") {
+        @Override
+        public void actionPerformed(ActionEvent arg0) {
+			saveConfig();
         }
     };
 
@@ -925,4 +1065,6 @@ public class MainFrame extends JFrame {
     private JPanel panelStatusAndDros;
     private JLabel droLbl;
     private JLabel lblStatus;
+    private JLabel lblPlacements;
+    private JProgressBar prgbrPlacements;
 }

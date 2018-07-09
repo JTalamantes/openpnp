@@ -12,6 +12,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.PatternSyntaxException;
 
 import javax.swing.AbstractAction;
 import javax.swing.Action;
@@ -26,11 +27,13 @@ import javax.swing.JScrollPane;
 import javax.swing.JTable;
 import javax.swing.JToolBar;
 import javax.swing.ListSelectionModel;
+import javax.swing.RowFilter;
 import javax.swing.UIManager;
 import javax.swing.border.LineBorder;
 import javax.swing.event.ListSelectionEvent;
 import javax.swing.event.ListSelectionListener;
 import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.TableRowSorter;
 
 import org.openpnp.events.PlacementSelectedEvent;
 import org.openpnp.gui.components.AutoSelectTextTable;
@@ -60,15 +63,18 @@ import org.openpnp.spi.PnpJobProcessor.JobPlacement;
 import org.openpnp.util.MovableUtils;
 import org.openpnp.util.UiUtils;
 import org.openpnp.util.Utils2D;
+import org.pmw.tinylog.Logger;
 
 public class JobPlacementsPanel extends JPanel {
     private JTable table;
     private PlacementsTableModel tableModel;
+    private TableRowSorter<PlacementsTableModel> tableSorter;
     private ActionGroup boardLocationSelectionActionGroup;
     private ActionGroup singleSelectionActionGroup;
     private ActionGroup multiSelectionActionGroup;
     private ActionGroup captureAndPositionActionGroup;
     private BoardLocation boardLocation;
+    private JobPanel jobPanel;
 
     private static Color typeColorIgnore = new Color(252, 255, 157);
     private static Color typeColorFiducial = new Color(157, 188, 255);
@@ -82,6 +88,8 @@ public class JobPlacementsPanel extends JPanel {
     private static Color jobColorComplete = new Color(157, 255, 168);
 
     public JobPlacementsPanel(JobPanel jobPanel) {
+    	this.jobPanel = jobPanel;
+    	
         Configuration configuration = Configuration.get();
 
         boardLocationSelectionActionGroup = new ActionGroup(newAction);
@@ -141,11 +149,11 @@ public class JobPlacementsPanel extends JPanel {
         JButton btnEditFeeder = new JButton(editPlacementFeederAction);
         btnEditFeeder.setHideActionText(true);
         toolBarPlacements.add(btnEditFeeder);
-
         tableModel = new PlacementsTableModel(configuration);
+        tableSorter = new TableRowSorter<>(tableModel);
 
         table = new AutoSelectTextTable(tableModel);
-        table.setAutoCreateRowSorter(true);
+        table.setRowSorter(tableSorter);
         table.getTableHeader().setDefaultRenderer(new MultisortTableHeaderCellRenderer());
         table.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         table.setDefaultEditor(Side.class, new DefaultCellEditor(sidesComboBox));
@@ -155,6 +163,7 @@ public class JobPlacementsPanel extends JPanel {
         table.setDefaultRenderer(PlacementsTableModel.Status.class, new StatusRenderer());
         table.setDefaultRenderer(Placement.Type.class, new TypeRenderer());
         table.setDefaultRenderer(PartCellValue.class, new IdRenderer());
+        tableModel.setJobPlacementsPanel(this);
         table.getSelectionModel().addListSelectionListener(new ListSelectionListener() {
             @Override
             public void valueChanged(ListSelectionEvent e) {
@@ -202,6 +211,7 @@ public class JobPlacementsPanel extends JPanel {
                     Placement placement = getSelection();
                     placement.setType(placement.getType() == Type.Place ? Type.Ignore : Type.Place);
                     tableModel.fireTableRowsUpdated(table.getSelectedRow(), table.getSelectedRow());
+                    updateActivePlacements();
                 }
                 else {
                     super.keyTyped(e);
@@ -236,6 +246,7 @@ public class JobPlacementsPanel extends JPanel {
     
     public void refresh() {
         tableModel.fireTableDataChanged();
+        updateActivePlacements();
     }
 
     public void selectPlacement(Placement placement) {
@@ -248,6 +259,32 @@ public class JobPlacementsPanel extends JPanel {
             }
         }
     }
+    
+    public void updateActivePlacements() {
+        int activePlacements = 0;
+        int totalActivePlacements = 0;
+        
+        List<BoardLocation> boardLocations = this.jobPanel.getJob().getBoardLocations();
+        for (BoardLocation boardLocation : boardLocations) {
+            if (boardLocation.isEnabled()) {
+                activePlacements += boardLocation.getActivePlacements();
+                totalActivePlacements += boardLocation.getTotalActivePlacements();
+            }
+        }
+        
+        int blTotalActivePlacements = 0;
+        int blActivePlacements = 0;
+        
+        if (boardLocation != null) {
+            blTotalActivePlacements = boardLocation.getTotalActivePlacements();
+            blActivePlacements = boardLocation.getActivePlacements();
+        }
+        
+        MainFrame.get().setPlacements(totalActivePlacements - activePlacements, 
+                totalActivePlacements, 
+                blTotalActivePlacements - blActivePlacements, 
+                blTotalActivePlacements);
+    }
 
     public void setBoardLocation(BoardLocation boardLocation) {
         this.boardLocation = boardLocation;
@@ -258,7 +295,19 @@ public class JobPlacementsPanel extends JPanel {
         else {
             tableModel.setBoardLocation(boardLocation);
             boardLocationSelectionActionGroup.setEnabled(true);
+
+            RowFilter<PlacementsTableModel, Object> rf = null;
+            // If current expression doesn't parse, don't update.
+			try {
+				rf = RowFilter.regexFilter("(?i)" + boardLocation.getSide().toString());
+			}
+            catch (PatternSyntaxException e) {
+                Logger.warn("Side sort failed", e);
+                return;
+            }
+            tableSorter.setRowFilter(rf);
         }
+        updateActivePlacements();
     }
 
     public Placement getSelection() {
@@ -319,6 +368,7 @@ public class JobPlacementsPanel extends JPanel {
 
             boardLocation.getBoard().addPlacement(placement);
             tableModel.fireTableDataChanged();
+            updateActivePlacements();
             boardLocation.setPlaced(placement.getId(), false);
             Helpers.selectLastTableRow(table);
         }
@@ -337,6 +387,7 @@ public class JobPlacementsPanel extends JPanel {
                 boardLocation.getBoard().removePlacement(placement);
             }
             tableModel.fireTableDataChanged();
+            updateActivePlacements();
         }
     };
 
@@ -483,6 +534,7 @@ public class JobPlacementsPanel extends JPanel {
             for (Placement placement : getSelections()) {
                 placement.setType(type);
                 tableModel.fireTableDataChanged();
+                updateActivePlacements();
             }
         }
     };
@@ -511,6 +563,7 @@ public class JobPlacementsPanel extends JPanel {
             for (Placement placement : getSelections()) {
                 placement.setSide(side);
                 tableModel.fireTableDataChanged();
+                updateActivePlacements();
             }
         }
     };
@@ -540,6 +593,7 @@ public class JobPlacementsPanel extends JPanel {
             for (Placement placement : getSelections()) {
                 boardLocation.setPlaced(placement.getId(), placed);
                 tableModel.fireTableDataChanged();   
+                updateActivePlacements();
             }
         }
     };
