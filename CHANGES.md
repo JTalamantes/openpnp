@@ -1,6 +1,29 @@
 This file lists major or notable changes to OpenPnP in chronological order. This is not
 a complete change list, only those that may directly interest or affect users.
 
+# 2018-07-15
+
+* TCP/IP Support in GcodeDriver
+
+	Thanks to a great effort from @PeeJay, GcodeDriver (and the OpenBuilds driver) now support
+	communication over TCP/IP in addition to serial. This makes it possible to use Smoothieboard
+	over Ethernet now, for example. To use TCP/IP, go to your Driver settings and check the
+	Communication tab for new options.
+	
+	This change requires a migration of communication settings. This should happen automatically.
+	If it doesn't, or if you get an error on startup, please let us know and post your machine.xml
+	to the Discussion Group at https://groups.google.com/forum/#!forum/openpnp.
+
+# 2018-07-13
+
+* Dwell Times per Nozzle Tip
+
+	Pick dwell time and place dwell time has been added to nozzle tip. 
+	This means the total dwell times are now the sum of the nozzle dwell times 
+	plus nozzle tip dwell times. The idea behind this is that larger nozzle tips
+	are used to lift bigger/heavier chips and typically require a bit longer dwell
+	times in general.
+ 
 # 2018-07-08
 
 @aneox submitted a bunch of great new features. Some are still being worked on, but the following
