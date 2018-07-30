@@ -7,7 +7,7 @@ import javax.swing.event.PopupMenuListener;
 
 import org.openpnp.gui.support.AbstractConfigurationWizard;
 import org.openpnp.gui.support.IntegerConverter;
-import org.openpnp.machine.reference.driver.AbstractCommunications;
+import org.openpnp.machine.reference.driver.AbstractReferenceDriver;
 import org.openpnp.machine.reference.driver.SerialPortCommunications;
 
 import com.jgoodies.forms.layout.ColumnSpec;
@@ -20,8 +20,8 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
 
-public class AbstractCommunicationsConfigurationWizard extends AbstractConfigurationWizard implements ActionListener {
-    private final AbstractCommunications driver;
+public class AbstractReferenceDriverConfigurationWizard extends AbstractConfigurationWizard implements ActionListener {
+    private final AbstractReferenceDriver driver;
     private JComboBox comboBoxPort;
     private JComboBox comboBoxBaud;
     private JComboBox flowControlComboBox;
@@ -37,7 +37,7 @@ public class AbstractCommunicationsConfigurationWizard extends AbstractConfigura
     private JPanel panelTcp;
     private JTextField commsMethod;
 
-    public AbstractCommunicationsConfigurationWizard(AbstractCommunications driver) {
+    public AbstractReferenceDriverConfigurationWizard(AbstractReferenceDriver driver) {
         this.driver = driver;
 
         contentPanel.setLayout(new BoxLayout(contentPanel, BoxLayout.Y_AXIS));
@@ -246,8 +246,8 @@ public class AbstractCommunicationsConfigurationWizard extends AbstractConfigura
         portTextField.setColumns(5);
 
         //Finally, click a radio button to initialise enabled/disabled setting
-        if(driver.getCommunications().equals("serial")){ radioSerial.doClick(); }
-        if(driver.getCommunications().equals("tcp")) { radioTCP.doClick(); }
+        if(driver.getCommunicationsType().equals("serial")){ radioSerial.doClick(); }
+        if(driver.getCommunicationsType().equals("tcp")) { radioTCP.doClick(); }
     }
 
     private void setPanelEnabled(JPanel panel, Boolean isEnabled) {
@@ -291,7 +291,7 @@ public class AbstractCommunicationsConfigurationWizard extends AbstractConfigura
     public void createBindings() {
         IntegerConverter integerConverter = new IntegerConverter();
 
-        addWrappedBinding(driver, "communications", commsMethod, "text");
+        addWrappedBinding(driver, "communicationsType", commsMethod, "text");
 
         addWrappedBinding(driver, "portName", comboBoxPort, "selectedItem");
         addWrappedBinding(driver, "baud", comboBoxBaud, "selectedItem");

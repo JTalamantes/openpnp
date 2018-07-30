@@ -52,7 +52,7 @@ import org.simpleframework.xml.core.Commit;
 import com.google.common.base.Joiner;
 
 @Root
-public class GcodeDriver extends AbstractCommunications implements Named, Runnable {
+public class GcodeDriver extends AbstractReferenceDriver implements Named, Runnable {
     public enum CommandType {
         COMMAND_CONFIRM_REGEX,
         POSITION_REPORT_REGEX,
@@ -198,7 +198,21 @@ public class GcodeDriver extends AbstractCommunications implements Named, Runnab
         axes = new ArrayList<>();
         axes.add(new Axis("x", Axis.Type.X, 0, "*"));
         axes.add(new Axis("y", Axis.Type.Y, 0, "*"));
-        axes.add(new Axis("z", Axis.Type.Z, 0, "*"));
+        try {
+            List<Nozzle> nozzles = Configuration.get().getMachine().getDefaultHead().getNozzles();
+            if (nozzles.size() < 1) {
+                throw new Exception("No nozzles.");
+            }
+            ArrayList<String> ids = new ArrayList<>();
+            for (Nozzle nozzle : nozzles) {
+                ids.add(nozzle.getId());
+            }
+            Axis axis = new Axis("z", Axis.Type.Z, 0, ids.toArray(new String[] {}));
+            axes.add(axis);
+        }
+        catch (Exception e) {
+            axes.add(new Axis("z", Axis.Type.Z, 0, "*"));
+        }
         axes.add(new Axis("rotation", Axis.Type.Rotation, 0, "*"));
 
         commands = new ArrayList<>();
@@ -209,7 +223,7 @@ public class GcodeDriver extends AbstractCommunications implements Named, Runnab
     }
 
     public synchronized void connect() throws Exception {
-        super.comms.connect();
+        getCommunications().connect();
 
         connected = false;
         readerThread = new Thread(this);
@@ -812,7 +826,7 @@ public class GcodeDriver extends AbstractCommunications implements Named, Runnab
         }
 
         try {
-            super.comms.disconnect();
+            getCommunications().disconnect();
         }
         catch (Exception e) {
             Logger.error("disconnect()", e);
@@ -822,7 +836,7 @@ public class GcodeDriver extends AbstractCommunications implements Named, Runnab
 
     @Override
     public void close() throws IOException {
-        super.comms.close();
+        super.close();
 
         for (ReferenceDriver driver : subDrivers) {
             driver.close();
@@ -863,8 +877,8 @@ public class GcodeDriver extends AbstractCommunications implements Named, Runnab
 
         // Send the command, if one was specified
         if (command != null) {
-            Logger.trace("[{}] >> {}", comms.getConnectionName(), command);
-            comms.writeLine(command);
+            Logger.trace("[{}] >> {}", getCommunications().getConnectionName(), command);
+            getCommunications().writeLine(command);
         }
 
         // Collect responses till we find one with the confirmation or we timeout. Return
@@ -914,7 +928,7 @@ public class GcodeDriver extends AbstractCommunications implements Named, Runnab
         responseQueue.drainTo(responses);
 
         Logger.debug("sendCommand({} {}, {}) => {}",
-                new Object[] {comms.getConnectionName(), command, timeout == Long.MAX_VALUE ? -1 : timeout, responses});
+                new Object[] {getCommunications().getConnectionName(), command, timeout == Long.MAX_VALUE ? -1 : timeout, responses});
         return responses;
     }
 
@@ -922,7 +936,7 @@ public class GcodeDriver extends AbstractCommunications implements Named, Runnab
         while (!disconnectRequested) {
             String line;
             try {
-                line = comms.readLine().trim();
+                line = getCommunications().readLine().trim();
             }
             catch (TimeoutException ex) {
                 continue;
@@ -932,7 +946,7 @@ public class GcodeDriver extends AbstractCommunications implements Named, Runnab
                 return;
             }
             line = line.trim();
-            Logger.trace("[{}] << {}", comms.getConnectionName(), line);
+            Logger.trace("[{}] << {}", getCommunications().getConnectionName(), line);
             if (!processPositionReport(line)) {
                 responseQueue.offer(line);
             }
