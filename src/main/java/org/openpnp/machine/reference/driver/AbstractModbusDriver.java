@@ -70,7 +70,31 @@ import com.ghgande.j2mod.modbus.util.BitVector;
  * disconnecting, reading and sending data blocks (Discrete Inputs, Coils, Holding Register, Input Register ).
  */
 public abstract class AbstractModbusDriver extends AbstractModelObject implements ReferenceDriver, Closeable {
-	
+
+	public Register[] getHoldings() {
+		synchronized (writeLock) {
+			return holdings;
+		}
+	}
+
+	public InputRegister[] getInputReg() {
+		synchronized (writeLock) {
+			return inputReg;
+		}
+	}
+
+	public BitVector getInputs() {
+		synchronized (writeLock) {
+			return inputs;
+		}
+	}
+
+	public BitVector getCoils() {
+		synchronized (writeLock) {
+			return coils;
+		}
+	}
+
 	public enum DataType{
 		INPUTS,
 		COILS,
@@ -112,10 +136,12 @@ public abstract class AbstractModbusDriver extends AbstractModelObject implement
 	@Attribute(required = false)
 	private int holdingsCount = 60;
 	//Modbus Buffers
-	protected Register[] holdings;
-	protected InputRegister[] inputReg;
-	protected BitVector inputs;
-	protected BitVector coils;
+	private Register[] holdings;
+	private InputRegister[] inputReg;
+	private BitVector inputs;
+	private BitVector coils;
+
+	private final Object writeLock = new Object();
 
 	protected synchronized void connect() throws Exception {
 		disconnect();
@@ -134,9 +160,9 @@ public abstract class AbstractModbusDriver extends AbstractModelObject implement
 	protected void initBuffers(){
 		holdings = new SimpleRegister[holdingsCount];
 
-		for(int i=0; i<holdings.length; i++)
+		for(int i = 0; i< getHoldings().length; i++)
 		{
-			holdings[i] = new SimpleRegister(0);
+			getHoldings()[i] = new SimpleRegister(0);
 		}
 
 		inputReg = new InputRegister[inputRegCount];
@@ -219,322 +245,355 @@ public abstract class AbstractModbusDriver extends AbstractModelObject implement
 	}
 
 	protected synchronized void readDiscreteInputs() throws ModbusException{
-		if(discreteInputsCount == 0){
-			return;
-		}        
-		//Read Contacts
-		inputs = this.modbusMaster.readInputDiscretes(discreteInputsOffset, discreteInputsCount);
+		synchronized (writeLock) {
+			if (discreteInputsCount == 0) {
+				return;
+			}
+			//Read Contacts
+			inputs = this.modbusMaster.readInputDiscretes(discreteInputsOffset, discreteInputsCount);
+		}
 	}
 
 	protected synchronized void readCoils() throws ModbusException{
-		if(coilsCount == 0){
-			return;
+		synchronized (writeLock) {
+			if (coilsCount == 0) {
+				return;
+			}
+			//Read Coils
+			coils = this.modbusMaster.readCoils(coilsOffset, coilsCount);
 		}
-		//Read Coils
-		coils = this.modbusMaster.readCoils(coilsOffset, coilsCount);
 	}
 
 	protected synchronized void writeCoils() throws ModbusException{
-		if(coilsCount==0){
-			return;
+		synchronized (writeLock) {
+			if (coilsCount == 0) {
+				return;
+			}
+			//Write each coil individually, problems with multiple coils
+			this.modbusMaster.writeMultipleCoils(coilsOffset, getCoils());
 		}
-		//Write each coil individually, problems with multiple coils
-		this.modbusMaster.writeMultipleCoils(coilsOffset, coils);
 	}
 
 	protected synchronized void readInputReg() throws ModbusException{ //Limited to 100 registers
-		//		int requests;
-		InputRegister[] readInput;
+		synchronized (writeLock) {
+			//		int requests;
+			InputRegister[] readInput;
 
-		if(inputRegCount == 0){
-			return;
+			if (inputRegCount == 0) {
+				return;
+			}
+
+			readInput = (InputRegister[]) this.modbusMaster.readInputRegisters(inputRegOffset,
+					inputRegCount);
+
+			for (int i = 0; i < readInput.length; i++) {
+				getInputReg()[i] = readInput[i];
+			}
+
+			/* Block to read more than 100 registers (in test) */
+			//		//Part the request in 100
+			//		requests = inputRegCount/100;
+			//		//Read all the times
+			//		for(int i=0;i<requests;i++){
+			//			InputRegister[] aIreg = (InputRegister[])this.modbusMaster.readInputRegisters(i*100, 100);
+			//
+			//			for(int j=0;j<aIreg.length;j++){
+			//				inputReg[j + (i*100)] = aIreg[j];
+			//			}
+			//		}
+			//
+			//		if(inputRegCount - (requests*100) > 0){
+			//			InputRegister[] aIreg = (InputRegister[])this.modbusMaster.readInputRegisters(requests*100, inputRegCount - (requests*100));
+			//
+			//			for(int j=0;j<aIreg.length;j++){
+			//				inputReg[j + (requests*100)] = aIreg[j];
+			//			}
+			//		}
 		}
-
-		readInput = (InputRegister[])this.modbusMaster.readInputRegisters(inputRegOffset, inputRegCount);
-		
-		for(int i=0;i<readInput.length;i++){
-			inputReg[i] = readInput[i];
-		}
-
-		/* Block to read more than 100 registers (in test) */
-		//		//Part the request in 100
-		//		requests = inputRegCount/100;
-		//		//Read all the times
-		//		for(int i=0;i<requests;i++){
-		//			InputRegister[] aIreg = (InputRegister[])this.modbusMaster.readInputRegisters(i*100, 100);
-		//
-		//			for(int j=0;j<aIreg.length;j++){
-		//				inputReg[j + (i*100)] = aIreg[j];
-		//			}
-		//		}
-		//
-		//		if(inputRegCount - (requests*100) > 0){
-		//			InputRegister[] aIreg = (InputRegister[])this.modbusMaster.readInputRegisters(requests*100, inputRegCount - (requests*100));
-		//
-		//			for(int j=0;j<aIreg.length;j++){
-		//				inputReg[j + (requests*100)] = aIreg[j];
-		//			}
-		//		}
 	}
 
 	protected synchronized void readHoldings() throws ModbusException{
-		if(holdingsCount == 0){
-			return;
+		synchronized (writeLock) {
+			if (holdingsCount == 0) {
+				return;
+			}
+			//Read Input Register
+			Register[] reg = this.modbusMaster.readMultipleRegisters(holdingsOffset, holdingsCount);
+			holdings = reg;
 		}
-		//Read Input Register
-		Register[] reg = this.modbusMaster.readMultipleRegisters(holdingsOffset, holdingsCount);
-		holdings = reg;
 	}
 
 	protected synchronized void writeHoldings() throws ModbusException{
-		if(holdingsCount == 0){
-			return;
+		synchronized (writeLock) {
+			if (holdingsCount == 0) {
+				return;
+			}
+			//Write Holdings
+			this.modbusMaster.writeMultipleRegisters(holdingsOffset, getHoldings());
 		}
-		//Write Holdings
-		this.modbusMaster.writeMultipleRegisters(holdingsOffset, holdings);
 	}
 
 	public void setByte(Byte data, DataType mbType, int address, ByteOrder order){
-		if(data == null){
-			return;
-		}
+		synchronized (writeLock) {
+			if (data == null) {
+				return;
+			}
 
-		switch(mbType){
-			case HOLDINGS:
-				Register tempHold = this.holdings[address];
-				byte[] values = tempHold.toBytes();
+			switch (mbType) {
+				case HOLDINGS:
+					Register tempHold = this.getHoldings()[address];
+					byte[] values = tempHold.toBytes();
 
-				if(order == ByteOrder.LSB){
-					values[0] = data;
-				}
-				else{
-					values[1] = data;
-				}
+					if (order == ByteOrder.LSB) {
+						values[0] = data;
+					}
+					else {
+						values[1] = data;
+					}
 
-				tempHold.setValue(values);
-				this.holdings[address] = tempHold;
-				break;
-			default:
-				break;
+					tempHold.setValue(values);
+					this.getHoldings()[address] = tempHold;
+					break;
+				default:
+					break;
+			}
 		}
 	}
 	//16 Bits int
 
-	public void setInt(Integer data, DataType mbType, int address){  
-		if(data == null){
-			return;
-		}
+	public void setInt(Integer data, DataType mbType, int address){
+		synchronized (writeLock) {
+			if (data == null) {
+				return;
+			}
 
-		switch(mbType){
-		case HOLDINGS:
-			this.holdings[address].setValue(data.shortValue());
-			break;
-		default:
-			break;
+			switch (mbType) {
+				case HOLDINGS:
+					this.getHoldings()[address].setValue(data.shortValue());
+					break;
+				default:
+					break;
+			}
 		}
 	}
 	//32 Bits Long
 	public void setLong(Integer data, DataType mbType, int address){
-		if(data == null){
-			return;
-		}
+		synchronized (writeLock) {
+			if (data == null) {
+				return;
+			}
 
-		switch(mbType){
-		case HOLDINGS:
-			SimpleRegister dataH = new SimpleRegister();
-			SimpleRegister dataL = new SimpleRegister();
+			switch (mbType) {
+				case HOLDINGS:
+					SimpleRegister dataH = new SimpleRegister();
+					SimpleRegister dataL = new SimpleRegister();
 
-			dataL.setValue(data.shortValue());
-			dataH.setValue(data >> 16);
+					dataL.setValue(data.shortValue());
+					dataH.setValue(data >> 16);
 
-			this.holdings[address].setValue(data.shortValue());
-			this.holdings[address + 1].setValue(data >> 16);
-			break;
-		default:
-			break;
+					this.getHoldings()[address].setValue(data.shortValue());
+					this.getHoldings()[address + 1].setValue(data >> 16);
+					break;
+				default:
+					break;
+			}
 		}
 	}
 	//32 Bits Float
 	public void setFloat(Float data, DataType mbType, int address){
-		if(data == null){
-			return;
-		}
+		synchronized (writeLock) {
+			if (data == null) {
+				return;
+			}
 
-		Integer dataInt = Float.floatToIntBits(data);
+			Integer dataInt = Float.floatToIntBits(data);
 
-		switch(mbType){
-		case HOLDINGS:
-			this.holdings[address].setValue(dataInt.shortValue());
-			this.holdings[address + 1].setValue(dataInt >> 16);
-			break;
-		default:
-			break;
+			switch (mbType) {
+				case HOLDINGS:
+					this.getHoldings()[address].setValue(dataInt.shortValue());
+					this.getHoldings()[address + 1].setValue(dataInt >> 16);
+					break;
+				default:
+					break;
+			}
 		}
 	}
 	//64 Bits Float
 	public void setDouble(Double data, DataType mbType, int address){
-		if(data == null){
-			return;
-		}
+		synchronized (writeLock) {
+			if (data == null) {
+				return;
+			}
 
-		Long dataLong = Double.doubleToLongBits(data);
+			Long dataLong = Double.doubleToLongBits(data);
 
-		switch(mbType){
-		case HOLDINGS:
-			this.holdings[address].setValue((short)dataLong.intValue());
-			this.holdings[address + 1].setValue((short)(dataLong >> 16));
-			this.holdings[address + 2].setValue((short)(dataLong >> 32));
-			this.holdings[address + 3].setValue((short)(dataLong >> 48));
-			break;
-		default:
-			break;
+			switch (mbType) {
+				case HOLDINGS:
+					this.getHoldings()[address].setValue((short) dataLong.intValue());
+					this.getHoldings()[address + 1].setValue((short) (dataLong >> 16));
+					this.getHoldings()[address + 2].setValue((short) (dataLong >> 32));
+					this.getHoldings()[address + 3].setValue((short) (dataLong >> 48));
+					break;
+				default:
+					break;
+			}
 		}
 	}
 	
 	///8 bits INT
     public Byte getByteData(DataType mbType, int address, ByteOrder order){
-        Byte data;
+		synchronized (writeLock) {
+			Byte data;
 
-		//Get if it is the MSB or LSB
-        int iOrder = order == ByteOrder.LSB ? 0 : 1;
+			//Get if it is the MSB or LSB
+			int iOrder = order == ByteOrder.LSB ? 0 : 1;
 
-        switch(mbType){            
-        case HOLDINGS:
-            data = this.holdings[address].toBytes()[iOrder]; //Get the lowest byte of the register
-            break;
-        
-        case INPUTREGISTER:
-            data = this.inputReg[address].toBytes()[iOrder]; //Get the lowest byte of the register
-            break;
-            
-		default:
-			return null;
-        }
-        
-        return data;
+			switch (mbType) {
+				case HOLDINGS:
+					data = this.getHoldings()[address].toBytes()[iOrder]; //Get the lowest byte of the register
+					break;
+
+				case INPUTREGISTER:
+					data = this.getInputReg()[address].toBytes()[iOrder]; //Get the lowest byte of the register
+					break;
+
+				default:
+					return null;
+			}
+
+			return data;
+		}
     }
     
     //16 Bits int
     public Integer getIntData(DataType mbType, int address){
-        Integer data = 0;
-        
-        switch(mbType){            
-        case HOLDINGS:
-            data = this.holdings[address].toUnsignedShort();
-            break;
-        
-        case INPUTREGISTER:
-            data = this.inputReg[address].toUnsignedShort();
-            break;
-            
-		default:
-			break;
-        }
-        
-        return data;
+		synchronized (writeLock) {
+			Integer data = 0;
+
+			switch (mbType) {
+				case HOLDINGS:
+					data = this.getHoldings()[address].toUnsignedShort();
+					break;
+
+				case INPUTREGISTER:
+					data = this.getInputReg()[address].toUnsignedShort();
+					break;
+
+				default:
+					break;
+			}
+
+			return data;
+		}
     }
     
     //32 Bits Long
     public Integer getLongData(DataType mbType, int address){
-        Integer data = 0;
-        short dataH;
-        short dataL;
-        
-        switch(mbType){            
-        case HOLDINGS:
-            dataL = this.holdings[address].toShort();
-            dataH = this.holdings[address+1].toShort();
-            data =  (dataH << 16) | (dataL);
-            break;
-        
-        case INPUTREGISTER:
-            dataL = this.inputReg[address].toShort();
-            dataH = this.inputReg[address+1].toShort();
-            data =  (dataH << 16) | (dataL);
-            break;
-		default:
-			break;
-        }
-        
-        return data;
+		synchronized (writeLock) {
+			Integer data = 0;
+			short dataH;
+			short dataL;
+
+			switch (mbType) {
+				case HOLDINGS:
+					dataL = this.getHoldings()[address].toShort();
+					dataH = this.getHoldings()[address + 1].toShort();
+					data = (dataH << 16) | (dataL);
+					break;
+
+				case INPUTREGISTER:
+					dataL = this.getInputReg()[address].toShort();
+					dataH = this.getInputReg()[address + 1].toShort();
+					data = (dataH << 16) | (dataL);
+					break;
+				default:
+					break;
+			}
+
+			return data;
+		}
     }
     //32 Bits Float
     public Float getFloatData(DataType mbType, int address){
-        Float data = 0f;
-        Integer dataInt = null;
-        int dataH;
-        int dataL;
-        
-        switch(mbType){            
-        case HOLDINGS:
-        	if((address + 1) > this.holdings.length){
-            	break;
-            }
-            dataL = this.holdings[address].toUnsignedShort();
-            dataH = this.holdings[address+1].toUnsignedShort();
-            dataInt =  (dataH << 16) | (dataL);
-            break;
-        
-        case INPUTREGISTER:
-        	if((address + 1) > this.inputReg.length){
-            	break;
-            }
-            dataL = this.inputReg[address].toUnsignedShort();
-            dataH = this.inputReg[address+1].toUnsignedShort();
-            dataInt =  (dataH << 16) | (dataL);
-            break;
-		default:
-			break;
-        }
-        
-        if(dataInt != null){
-            data =  Float.intBitsToFloat(dataInt);
-        }
-        
-        return data;
+		synchronized (writeLock) {
+			Float data = 0f;
+			Integer dataInt = null;
+			int dataH;
+			int dataL;
+
+			switch (mbType) {
+				case HOLDINGS:
+					if ((address + 1) > this.getHoldings().length) {
+						break;
+					}
+					dataL = this.getHoldings()[address].toUnsignedShort();
+					dataH = this.getHoldings()[address + 1].toUnsignedShort();
+					dataInt = (dataH << 16) | (dataL);
+					break;
+
+				case INPUTREGISTER:
+					if ((address + 1) > this.getInputReg().length) {
+						break;
+					}
+					dataL = this.getInputReg()[address].toUnsignedShort();
+					dataH = this.getInputReg()[address + 1].toUnsignedShort();
+					dataInt = (dataH << 16) | (dataL);
+					break;
+				default:
+					break;
+			}
+
+			if (dataInt != null) {
+				data = Float.intBitsToFloat(dataInt);
+			}
+
+			return data;
+		}
     }
     //64 Bits Float
     public Double getDoubleData(DataType mbType, int address){
-        Double data = 0d;
-        Long dataLong = null;
-        int dataH;
-        int dataL;
-        short dataLL;
-        short dataHL;
-        
-        switch(mbType){            
-        case HOLDINGS:
-            dataLL = this.holdings[address].toShort();
-            dataHL = this.holdings[address+1].toShort();
-            dataL =  (dataHL << 16) | (dataLL);
-            
-            dataLL = this.holdings[address+2].toShort();
-            dataHL = this.holdings[address+3].toShort();
-            dataH =  (dataHL << 16) | (dataLL);
-            
-            dataLong = (long)((long)dataH << 32) | (long)(dataL);
-            break;
-        
-        case INPUTREGISTER:
-            dataLL = this.inputReg[address].toShort();
-            dataHL = this.inputReg[address+1].toShort();
-            dataL =  (dataHL << 16) | (dataLL);
-            
-            dataLL = this.inputReg[address+2].toShort();
-            dataHL = this.inputReg[address+3].toShort();
-            dataH =  (dataHL << 16) | (dataLL);
-            
-            dataLong = (long)((long)dataH << 32) | (long)(dataL);
-            break;
-		default:
-			break;
-        }
-        
-        if(dataLong != null){
-            data =  Double.longBitsToDouble(dataLong);
-        }
-        
-        return data;
+		synchronized (writeLock) {
+			Double data = 0d;
+			Long dataLong = null;
+			int dataH;
+			int dataL;
+			short dataLL;
+			short dataHL;
+
+			switch (mbType) {
+				case HOLDINGS:
+					dataLL = this.getHoldings()[address].toShort();
+					dataHL = this.getHoldings()[address + 1].toShort();
+					dataL = (dataHL << 16) | (dataLL);
+
+					dataLL = this.getHoldings()[address + 2].toShort();
+					dataHL = this.getHoldings()[address + 3].toShort();
+					dataH = (dataHL << 16) | (dataLL);
+
+					dataLong = (long) ((long) dataH << 32) | (long) (dataL);
+					break;
+
+				case INPUTREGISTER:
+					dataLL = this.getInputReg()[address].toShort();
+					dataHL = this.getInputReg()[address + 1].toShort();
+					dataL = (dataHL << 16) | (dataLL);
+
+					dataLL = this.getInputReg()[address + 2].toShort();
+					dataHL = this.getInputReg()[address + 3].toShort();
+					dataH = (dataHL << 16) | (dataLL);
+
+					dataLong = (long) ((long) dataH << 32) | (long) (dataL);
+					break;
+				default:
+					break;
+			}
+
+			if (dataLong != null) {
+				data = Double.longBitsToDouble(dataLong);
+			}
+
+			return data;
+		}
     }
 
 	/**
